@@ -1,0 +1,16 @@
+{
+  "name": "cf-poc-report-api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241205.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^4.69.0"
+  }
+}

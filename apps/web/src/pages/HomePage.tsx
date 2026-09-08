@@ -1,0 +1,558 @@
+/**
+ * HomePage — Alfa Romeo design language.
+ * Dark Deep Navy hero, sharp zero-radius inputs, uppercase labels, thin red accent lines.
+ */
+import { useState, useRef } from "react";
+import {
+  Shield, Key, Building, AlertCircle, Eye, EyeOff,
+  Loader2, Globe, ChevronDown, CheckCircle, Upload, User, Users, Calendar, Clock,
+} from "lucide-react";
+import type { ReportInput, ZoneOption } from "../types";
+import { fetchZones } from "../services/api";
+
+interface Props {
+  onSubmit: (input: ReportInput) => void;
+  loading: boolean;
+  error?: string;
+  userEmail?: string | null;
+  onOpenSchedules: () => void;
+}
+
+const REQUIRED_PERMISSIONS: { label: string; note?: string; required: boolean }[] = [
+  { label: "Zone · Zone Read",                    required: true,  note: "Zone info, plan, status" },
+  { label: "Zone · Zone Settings · Read",         required: true,  note: "All zone settings" },
+  { label: "Zone · Analytics · Read",             required: true,  note: "GraphQL Analytics API" },
+  { label: "Zone · Zone Rulesets · Read",         required: true,  note: "WAF managed rules" },
+  { label: "Zone · WAF · Read",                   required: true,  note: "Legacy firewall rules" },
+  { label: "Zone · Bot Management · Read",        required: true,  note: "Bot Management config" },
+  { label: "Zone · DDoS Protection · Read",       required: true,  note: "DDoS protection ruleset" },
+  { label: "Zone · Firewall Services · Read",     required: true,  note: "Firewall rules" },
+  { label: "Zone · DNS · Read",                   required: true,  note: "DNS record inventory" },
+  { label: "Zone · SSL and Certificates · Read",  required: true,  note: "Certificate packs" },
+  { label: "Zone · Cache Rules · Read",           required: true,  note: "Cache rules" },
+  { label: "Zone · API Gateway · Read",           required: false, note: "Optional — API Shield" },
+  { label: "Zone · Page Shield · Read",           required: false, note: "Optional — Page Shield" },
+  { label: "Account · Account Settings · Read",   required: true,  note: "Account info" },
+  { label: "Account · Account Analytics · Read",  required: false, note: "Optional — DNS analytics" },
+];
+
+const ZT_PERMISSIONS: { label: string; note?: string; required: boolean }[] = [
+  { label: "Account · Zero Trust Read",           required: true,  note: "Access apps, policies, auth events" },
+  { label: "Account · Access · Apps · Read",      required: true,  note: "Access application inventory" },
+  { label: "Account · Access · Policies · Read",  required: true,  note: "Per-app policy rules" },
+  { label: "Account · Access · Audit Logs · Read", required: false, note: "Optional — real seat counts and last-login (/access/users)" },
+  { label: "Account · Gateway · Read",            required: true,  note: "DNS/HTTP/L4 filtering stats, WARP device connection status" },
+  { label: "Account · Zero Trust · Analytics",    required: true,  note: "GraphQL: auth events, Gateway, WARP device status, bandwidth" },
+  { label: "Account · WARP · Read",               required: false, note: "Optional — enrolled devices" },
+  { label: "Account · Tunnels · Read",            required: false, note: "Optional — Tunnel status" },
+  { label: "Account · DLP · Read",                required: false, note: "Optional — DLP profiles" },
+  { label: "Account · Zero Trust Read/Write",     required: false, note: "Optional — CASB findings (/data-security/posture/findings)" },
+  { label: "Account · Notifications Read",        required: false, note: "Optional — recent alert history" },
+  { label: "Account · Account Settings · Read",   required: true,  note: "Account name" },
+];
+
+const TIMEFRAME_OPTIONS = [
+  { days: 1,  label: "1 Day"  },
+  { days: 3,  label: "3 Days" },
+  { days: 5,  label: "5 Days" },
+  { days: 7,  label: "7 Days" },
+  { days: 14, label: "14 Days"},
+  { days: 30, label: "30 Days"},
+];
+
+export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSchedules }: Props) {
+  const [product, setProduct]             = useState<"appsec" | "zero-trust">("appsec");
+  const [token, setToken]                 = useState("");
+  const [accountId, setAccountId]         = useState("");
+  const [showToken, setShowToken]         = useState(false);
+  const [touched, setTouched]             = useState({ token: false, accountId: false });
+  const [zones, setZones]                 = useState<ZoneOption[]>([]);
+  const [selectedZoneId, setSelectedZoneId] = useState("");
+  const [fetchingZones, setFetchingZones] = useState(false);
+  const [zoneError, setZoneError]         = useState("");
+  const [days, setDays]                   = useState<number>(30);
+  const [clientName, setClientName]       = useState("");
+  const [partnerName, setPartnerName]     = useState("");
+  const [clientLogo, setClientLogo]       = useState<string>("");
+  const [logoFileName, setLogoFileName]   = useState("");
+  const [isPoc, setIsPoc]                 = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isValidHex32 = (s: string) => /^[a-f0-9]{32}$/i.test(s);
+  const tokenOk      = token.trim().length > 10;
+  const accountOk    = isValidHex32(accountId);
+  const zoneOk       = isValidHex32(selectedZoneId);
+  const canFetchZones = tokenOk && accountOk && !fetchingZones;
+  const canSubmit     = product === "zero-trust"
+    ? tokenOk && accountOk && !loading
+    : tokenOk && accountOk && zoneOk && !loading;
+  const showConfig    = product === "zero-trust" || (zones.length > 0 && selectedZoneId);
+
+  async function handleFetchZones() {
+    setZoneError(""); setZones([]); setSelectedZoneId(""); setFetchingZones(true);
+    try {
+      const list = await fetchZones(token.trim(), accountId.trim().toLowerCase());
+      if (list.length === 0) setZoneError("No active zones found for this account.");
+      else { setZones(list); if (list.length === 1) setSelectedZoneId(list[0].id); }
+    } catch (e: unknown) {
+      setZoneError(e instanceof Error ? e.message : "Failed to fetch zones.");
+    } finally { setFetchingZones(false); }
+  }
+
+  function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { alert("Logo must be under 2MB"); return; }
+    if (!["image/png","image/jpeg","image/svg+xml","image/webp"].includes(file.type)) {
+      alert("Only PNG, JPG, SVG, or WebP"); return;
+    }
+    setLogoFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => setClientLogo(reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    onSubmit({
+      token: token.trim(),
+      zoneId: product === "zero-trust" ? "" : selectedZoneId,
+      accountId: accountId.trim().toLowerCase(),
+      days, tzOffset: new Date().getTimezoneOffset(),
+      product,
+      clientName:  clientName.trim()  || undefined,
+      partnerName: partnerName.trim() || undefined,
+      clientLogo:  clientLogo         || undefined,
+      isPoc,
+    });
+  }
+
+  const perms = product === "zero-trust" ? ZT_PERMISSIONS : REQUIRED_PERMISSIONS;
+
+  return (
+    <div className="min-h-screen" style={{ backgroundColor: "#1c1f2a" }}>
+
+      {/* ── Nav bar ────────────────────────────────────────────────────────── */}
+      <nav className="sticky top-0 z-50 h-[67px] flex items-center px-8"
+        style={{ backgroundColor: "#1c1f2a", borderBottom: "3px solid #ba0816" }}>
+        <div className="flex items-center gap-4 flex-1">
+          {/* Cloudflare shield — sole brand identifier */}
+          <img src="/cf.png" alt="Cloudflare"
+            style={{ height: 28, objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.9 }} />
+          {/* Thin red separator */}
+          <div className="h-5 w-px" style={{ backgroundColor: "#ba0816" }} />
+          <span style={{
+            fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+            textTransform: "uppercase", color: "rgba(244,244,244,0.6)"
+          }}>
+            POC Report Builder
+          </span>
+        </div>
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onOpenSchedules}
+            className="flex items-center gap-2"
+            style={{
+              padding: "9px 16px 7px",
+              fontSize: 11, letterSpacing: "0.09375rem", textTransform: "uppercase",
+              color: "rgba(244,244,244,0.75)", cursor: "pointer",
+              border: "1px solid rgba(244,244,244,0.25)", backgroundColor: "transparent",
+              transition: "all 0.15s",
+            }}
+          >
+            <Clock size={12} /> Scheduled Reports
+          </button>
+          {userEmail && (
+            <div className="flex items-center gap-2">
+              <User size={12} style={{ color: "rgba(244,244,244,0.4)" }} />
+              <span style={{ fontSize: 11, color: "rgba(244,244,244,0.5)", letterSpacing: "0.05em" }}>
+                {userEmail}
+              </span>
+            </div>
+          )}
+        </div>
+      </nav>
+
+      {/* ── Hero section — dark cinematic with red stripe ─────────────────── */}
+      {/* Full-width AR Red stripe at the very top of hero */}
+      <div style={{ backgroundColor: "#ba0816", height: 4, width: "100%" }} />
+      <div className="px-8 pt-14 pb-14" style={{
+        backgroundColor: "#1c1f2a",
+        backgroundImage: "linear-gradient(135deg, rgba(186,8,22,0.08) 0%, transparent 60%)",
+      }}>
+        <div className="max-w-2xl">
+          {/* Red accent line + label */}
+          <div className="flex items-center gap-3 mb-8">
+            <div style={{ width: 56, height: 3, backgroundColor: "#ba0816" }} />
+            <span style={{
+              fontSize: 11, letterSpacing: "0.09375rem", textTransform: "uppercase",
+              color: "#ba0816", fontWeight: 400
+            }}>
+              Cloudflare · Security Analytics
+            </span>
+          </div>
+          {/* Hero headline */}
+          <h1 style={{
+            fontSize: "clamp(2.2rem, 5vw, 3.6rem)", fontWeight: 700, lineHeight: 1.05,
+            letterSpacing: "-0.04em", textTransform: "uppercase", color: "#f4f4f4",
+            marginBottom: "1.25rem"
+          }}>
+            POC Report<br />
+            <span style={{ color: "#ba0816" }}>Builder</span>
+          </h1>
+          <p style={{ fontSize: 15, color: "rgba(244,244,244,0.55)", lineHeight: 1.65, maxWidth: 480 }}>
+            Generate a comprehensive security posture report from your Cloudflare account data.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Main content — light section ───────────────────────────────────── */}
+      <div style={{ backgroundColor: "#f4f4f4" }}>
+        <div className="max-w-3xl mx-auto px-8 py-12">
+
+          {/* Product selector */}
+          <div className="mb-8">
+            <div className="flex items-center gap-3 mb-4">
+              <div style={{ width: 40, height: 2, backgroundColor: "#ba0816" }} />
+              <span style={{ fontSize: 11, letterSpacing: "0.09375rem", textTransform: "uppercase", color: "#5d5e65" }}>
+                Select Report Type
+              </span>
+            </div>
+            <div className="flex gap-0">
+              {(["appsec", "zero-trust"] as const).map((p) => (
+                <button key={p} onClick={() => { setProduct(p); setSelectedZoneId(""); setZones([]); }}
+                  style={{
+                    padding: "15px 32px 13px",
+                    fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                    textTransform: "uppercase" as const, cursor: "pointer",
+                    border: "1px solid",
+                    borderColor: product === p ? "#ba0816" : "#c4c4c4",
+                    backgroundColor: product === p ? "#ba0816" : "transparent",
+                    color: product === p ? "#ffffff" : "#5d5e65",
+                    transition: "all 0.15s",
+                    marginRight: -1,
+                  }}>
+                  {p === "appsec" ? "App Security" : "Cloudflare One"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Form */}
+          <form onSubmit={handleSubmit}>
+
+            {/* Error banner */}
+            {error && (
+              <div className="flex items-start gap-3 mb-6 p-4"
+                style={{ backgroundColor: "#fef2f2", border: "1px solid #fecaca" }}>
+                <AlertCircle size={15} style={{ color: "#d51121", flexShrink: 0, marginTop: 1 }} />
+                <p style={{ fontSize: 13, color: "#7f1d1d" }}>{error}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-6">
+
+              {/* API Token */}
+              <div>
+                <label className="ar-input-label">
+                  <Key size={10} style={{ display: "inline", marginRight: 4 }} />
+                  API Token
+                </label>
+                <div style={{ position: "relative" }}>
+                  <input
+                    type={showToken ? "text" : "password"}
+                    value={token}
+                    onChange={(e) => { setToken(e.target.value); setZones([]); setSelectedZoneId(""); }}
+                    onBlur={() => setTouched((t) => ({ ...t, token: true }))}
+                    placeholder="Paste your Cloudflare API token"
+                    className={`ar-input ${touched.token && !tokenOk ? "ar-input-error" : ""}`}
+                    style={{ paddingRight: 44, fontFamily: "monospace" }}
+                    autoComplete="off"
+                  />
+                  <button type="button" onClick={() => setShowToken((s) => !s)}
+                    style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#5d5e65" }}>
+                    {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                {touched.token && !tokenOk && (
+                  <p style={{ fontSize: 11, color: "#d51121", marginTop: 4 }}>API token is required</p>
+                )}
+              </div>
+
+              {/* Account ID + Fetch Zones */}
+              <div>
+                <label className="ar-input-label">
+                  <Building size={10} style={{ display: "inline", marginRight: 4 }} />
+                  Account ID
+                </label>
+                <div style={{ display: "flex", gap: 0 }}>
+                  <input
+                    type="text"
+                    value={accountId}
+                    onChange={(e) => { setAccountId(e.target.value); setZones([]); setSelectedZoneId(""); }}
+                    onBlur={() => setTouched((t) => ({ ...t, accountId: true }))}
+                    placeholder="32-character hex account ID"
+                    maxLength={32}
+                    className={`ar-input ${touched.accountId && !accountOk ? "ar-input-error" : ""}`}
+                    style={{ flex: 1, fontFamily: "monospace" }}
+                  />
+                  <button type="button" onClick={handleFetchZones} disabled={!canFetchZones}
+                    className="ar-btn" style={{ borderLeft: "none", flexShrink: 0 }}>
+                    {fetchingZones ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Fetching…</> : <><Globe size={12} /> Fetch Zones</>}
+                  </button>
+                </div>
+                {touched.accountId && !accountOk && (
+                  <p style={{ fontSize: 11, color: "#d51121", marginTop: 4 }}>Account ID must be a 32-character hex string</p>
+                )}
+                <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 4 }}>
+                  Found in Cloudflare Dashboard → right sidebar under "Account ID"
+                </p>
+              </div>
+
+              {/* Zone picker */}
+              {product === "appsec" && zoneError && (
+                <div className="flex items-start gap-3 p-4"
+                  style={{ backgroundColor: "#fef2f2", border: "1px solid #fecaca" }}>
+                  <AlertCircle size={14} style={{ color: "#d51121", flexShrink: 0 }} />
+                  <p style={{ fontSize: 12, color: "#7f1d1d" }}>{zoneError}</p>
+                </div>
+              )}
+
+              {product === "appsec" && zones.length > 0 && (
+                <div>
+                  <label className="ar-input-label">
+                    <Globe size={10} style={{ display: "inline", marginRight: 4 }} />
+                    Select Zone
+                    <span style={{ textTransform: "none", fontWeight: 400, marginLeft: 8, color: "#5d5e65" }}>
+                      ({zones.length} zone{zones.length !== 1 ? "s" : ""} found)
+                    </span>
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <select value={selectedZoneId} onChange={(e) => setSelectedZoneId(e.target.value)}
+                      className="ar-input" style={{ appearance: "none", paddingRight: 36, cursor: "pointer" }}>
+                      <option value="">— Select a zone —</option>
+                      {zones.map((z) => (
+                        <option key={z.id} value={z.id}>{z.name} ({z.plan})</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", color: "#5d5e65", pointerEvents: "none" }} />
+                  </div>
+                  {zones.find((z) => z.id === selectedZoneId) && (
+                    <p style={{ fontSize: 11, color: "#1d5b40", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                      <CheckCircle size={11} /> {zones.find((z) => z.id === selectedZoneId)?.name}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* ZT info */}
+              {product === "zero-trust" && (
+                <div className="p-4" style={{ backgroundColor: "#1c1f2a", border: "1px solid #ba0816", borderLeft: "4px solid #ba0816" }}>
+                  <div className="flex items-start gap-3">
+                    <Shield size={14} style={{ color: "#ba0816", flexShrink: 0, marginTop: 1 }} />
+                    <div>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: "#f4f4f4", textTransform: "uppercase", letterSpacing: "0.09375rem", marginBottom: 4 }}>
+                        Cloudflare One — Account-Level Report
+                      </p>
+                      <p style={{ fontSize: 12, color: "rgba(244,244,244,0.55)", lineHeight: 1.6 }}>
+                        Covers Access (identity), Gateway (DNS/HTTP/L4), WARP (device posture), Tunnels, and DLP. No zone selection needed.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Timeframe */}
+              {showConfig && (
+                <div>
+                  <label className="ar-input-label">
+                    <Calendar size={10} style={{ display: "inline", marginRight: 4 }} />
+                    Report Timeframe
+                  </label>
+                  <div style={{ display: "flex", gap: 0 }}>
+                    {TIMEFRAME_OPTIONS.map((opt) => (
+                      <button key={opt.days} type="button" onClick={() => setDays(opt.days)}
+                        style={{
+                          flex: 1, padding: "13px 8px 11px",
+                          fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                          textTransform: "uppercase" as const, cursor: "pointer",
+                          border: "1px solid",
+                          borderColor: days === opt.days ? "#ba0816" : "#c4c4c4",
+                          backgroundColor: days === opt.days ? "#ba0816" : "transparent",
+                          color: days === opt.days ? "#ffffff" : "#5d5e65",
+                          marginRight: -1, transition: "all 0.15s",
+                          textAlign: "center" as const,
+                        }}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Report Framing — POC vs. neutral assessment */}
+              {showConfig && (
+                <div>
+                  <label
+                    htmlFor="isPocCheckbox"
+                    style={{
+                      display: "flex", alignItems: "flex-start", gap: 12,
+                      padding: "14px 16px", cursor: "pointer",
+                      border: "1px solid #c4c4c4", backgroundColor: "#fafafa",
+                    }}
+                  >
+                    <input
+                      id="isPocCheckbox"
+                      type="checkbox"
+                      checked={isPoc}
+                      onChange={(e) => setIsPoc(e.target.checked)}
+                      style={{ marginTop: 2, width: 16, height: 16, accentColor: "#ba0816", cursor: "pointer", flexShrink: 0 }}
+                    />
+                    <div>
+                      <span style={{
+                        fontSize: 12, fontWeight: 600, color: "#292b35",
+                        display: "block", marginBottom: 2,
+                      }}>
+                        This is a POC (Proof-of-Concept) report
+                      </span>
+                      <span style={{ fontSize: 11, color: "#5d5e65", lineHeight: 1.5 }}>
+                        Includes security recommendations, the cost/sizing calculator, and POC-specific wording
+                        (e.g. "Proof-of-Concept", "POC period"). Uncheck for a neutral assessment report without
+                        these — useful for existing customers or non-trial reviews.
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {/* Branding */}
+              {showConfig && (
+                <div>
+                  <div className="flex items-center gap-3 mb-4">
+                    <div style={{ height: 1, width: 40, backgroundColor: "#ba0816" }} />
+                    <span style={{ fontSize: 11, letterSpacing: "0.09375rem", textTransform: "uppercase", color: "#5d5e65" }}>
+                      Report Branding (Optional)
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="ar-input-label">
+                        <User size={10} style={{ display: "inline", marginRight: 4 }} /> Client Name
+                      </label>
+                      <input type="text" value={clientName}
+                        onChange={(e) => setClientName(e.target.value)}
+                        placeholder="e.g. Acme Corp" className="ar-input" />
+                    </div>
+                    <div>
+                      <label className="ar-input-label">
+                        <Users size={10} style={{ display: "inline", marginRight: 4 }} /> Partner / Reseller
+                      </label>
+                      <input type="text" value={partnerName}
+                        onChange={(e) => setPartnerName(e.target.value)}
+                        placeholder="e.g. Cloud Solutions" className="ar-input" />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="ar-input-label">
+                      <Upload size={10} style={{ display: "inline", marginRight: 4 }} /> Client Logo
+                    </label>
+                    <input ref={fileInputRef} type="file"
+                      accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                      onChange={handleLogoUpload} style={{ display: "none" }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <button type="button" onClick={() => fileInputRef.current?.click()}
+                        className="ar-btn-ghost" style={{ padding: "11px 20px 9px" }}>
+                        <Upload size={12} /> {clientLogo ? "Change Logo" : "Upload Logo"}
+                      </button>
+                      {clientLogo && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <img src={clientLogo} alt="Logo" style={{ height: 32, width: 32, objectFit: "contain" }} />
+                          <span style={{ fontSize: 11, color: "#5d5e65" }}>{logoFileName}</span>
+                          <button type="button" onClick={() => { setClientLogo(""); setLogoFileName(""); }}
+                            style={{ fontSize: 11, color: "#d51121", background: "none", border: "none", cursor: "pointer" }}>
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Submit */}
+              <div style={{ paddingTop: 8 }}>
+                <button type="submit" disabled={!canSubmit}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    width: "100%", padding: "17px 24px 15px",
+                    fontSize: 11, fontWeight: 600, letterSpacing: "0.12rem",
+                    textTransform: "uppercase" as const,
+                    backgroundColor: canSubmit ? "#ba0816" : "#c4c4c4",
+                    color: canSubmit ? "#ffffff" : "#5d5e65",
+                    border: `1px solid ${canSubmit ? "#ba0816" : "#c4c4c4"}`,
+                    cursor: canSubmit ? "pointer" : "not-allowed",
+                    transition: "all 0.15s",
+                  }}>
+                  {loading
+                    ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Fetching data from Cloudflare…</>
+                    : <><Shield size={14} /> Generate POC Report</>
+                  }
+                </button>
+                <p style={{ fontSize: 11, color: "#5d5e65", textAlign: "center", marginTop: 12 }}>
+                  Your API token is used only to fetch data and is never stored.
+                </p>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* ── Permissions — dark section ──────────────────────────────────────── */}
+      <div style={{ backgroundColor: "#1c1f2a", padding: "3rem 2rem 4rem" }}>
+        <div className="max-w-3xl mx-auto">
+          {/* Label */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: "1.5rem" }}>
+            <div style={{ width: 40, height: 2, backgroundColor: "#ba0816", flexShrink: 0 }} />
+            <span style={{ fontSize: 11, letterSpacing: "0.09375rem", textTransform: "uppercase", color: "rgba(244,244,244,0.4)" }}>
+              API Token Permissions Required
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2">
+            {perms.map((p) => (
+              <div key={p.label} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <div style={{
+                  width: 4, height: 4, marginTop: 5, flexShrink: 0,
+                  backgroundColor: p.required ? "#ba0816" : "#5d5e65",
+                }} />
+                <div>
+                  <span style={{
+                    fontSize: 11, fontFamily: "monospace",
+                    color: p.required ? "rgba(244,244,244,0.7)" : "rgba(244,244,244,0.35)"
+                  }}>
+                    {p.label}
+                    {!p.required && <span style={{ marginLeft: 6, fontSize: 10, fontStyle: "italic", color: "#5d5e65" }}>optional</span>}
+                  </span>
+                  {p.note && (
+                    <p style={{ fontSize: 10, color: "rgba(244,244,244,0.25)", marginTop: 2 }}>{p.note}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: "1.5rem", paddingTop: "1.5rem", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 4, height: 4, backgroundColor: "#ba0816" }} />
+              <span style={{ fontSize: 10, color: "rgba(244,244,244,0.35)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Required</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 4, height: 4, backgroundColor: "#5d5e65" }} />
+              <span style={{ fontSize: 10, color: "rgba(244,244,244,0.25)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Optional</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
