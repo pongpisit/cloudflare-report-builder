@@ -1,4 +1,4 @@
-# Cloudflare POC Report Builder
+# Cloudflare Report Builder
 
 Generate polished, data-rich PDF/HTML reports straight from live Cloudflare
 analytics — either a **Security (AppSec) report** for a single zone, or a
@@ -7,7 +7,7 @@ AI-written executive summary, charts, and prioritized recommendations. Built
 entirely as a Cloudflare Worker + static frontend: no external servers, no
 database to manage beyond Cloudflare's own D1/R2.
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/pongpisit/cf-poc-report-builder)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/pongpisit/cloudflare-report-builder)
 
 > Built for Cloudflare partners, SEs, and customers who want a Proof-of-Concept
 > or recurring security assessment report generated from *real* Cloudflare
@@ -120,8 +120,8 @@ Access-authenticated user's email for you once Access is in front.
 ## Manual deployment (alternative to the button)
 
 ```bash
-git clone https://github.com/<you>/cf-poc-report-builder.git
-cd cf-poc-report-builder
+git clone https://github.com/<you>/cloudflare-report-builder.git
+cd cloudflare-report-builder
 npm install
 
 # One-time: create the D1 database and record its ID locally (never committed)

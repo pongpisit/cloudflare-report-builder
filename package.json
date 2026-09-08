@@ -1,5 +1,5 @@
 {
-  "name": "cf-poc-report-builder",
+  "name": "cloudflare-report-builder",
   "version": "1.0.0",
   "private": true,
   "workspaces": [

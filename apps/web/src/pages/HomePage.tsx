@@ -146,7 +146,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
             fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
             textTransform: "uppercase", color: "rgba(244,244,244,0.6)"
           }}>
-            POC Report Builder
+            Cloudflare Report Builder
           </span>
         </div>
         <div className="flex items-center gap-4">
@@ -198,7 +198,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
             letterSpacing: "-0.04em", textTransform: "uppercase", color: "#f4f4f4",
             marginBottom: "1.25rem"
           }}>
-            POC Report<br />
+            Report<br />
             <span style={{ color: "#ba0816" }}>Builder</span>
           </h1>
           <p style={{ fontSize: 15, color: "rgba(244,244,244,0.55)", lineHeight: 1.65, maxWidth: 480 }}>
@@ -496,7 +496,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                   }}>
                   {loading
                     ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Fetching data from Cloudflare…</>
-                    : <><Shield size={14} /> Generate POC Report</>
+                    : <><Shield size={14} /> Generate {isPoc ? "POC" : "Assessment"} Report</>
                   }
                 </button>
                 <p style={{ fontSize: 11, color: "#5d5e65", textAlign: "center", marginTop: 12 }}>

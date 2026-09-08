@@ -1,5 +1,5 @@
 #:schema node_modules/wrangler/config-schema.json
-name = "cf-poc-report-builder"
+name = "cloudflare-report-builder"
 main = "apps/api/src/index.ts"
 compatibility_date = "2025-03-01"
 compatibility_flags = ["nodejs_compat"]

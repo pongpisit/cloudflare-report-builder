@@ -1,7 +1,7 @@
 /**
- * cf-poc-report-api — Cloudflare Worker (Hono)
- * Read-only Cloudflare data aggregation for POC reports + scheduled email
- * delivery (cron → Email Sending binding).
+ * Cloudflare Report Builder — API Worker (Hono)
+ * Read-only Cloudflare data aggregation for AppSec/Zero Trust POC or
+ * assessment reports + scheduled email delivery (cron → Email Sending binding).
  *
  * Routes:
  *   POST /api/zones     — list zones for an account (lightweight, no rate limit)

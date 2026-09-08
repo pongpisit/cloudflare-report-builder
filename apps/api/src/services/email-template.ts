@@ -294,7 +294,7 @@ export function renderAppsecEmail(appsec: AppSecData, p: ReportEmailParams): Ren
     kpis,
     lists,
     summaryTextBlock: summaryParagraphs(p.aiSummary),
-    footerNote: `Sent automatically by the Cloudflare POC Report Builder — schedule "${p.scheduleName}". Bandwidth served: ${fmtBytes(s.totalBandwidthBytes ?? 0)} (${fmtBytes(s.cachedBandwidthBytes ?? 0)} cached).`,
+    footerNote: `Sent automatically by the Cloudflare Report Builder — schedule "${p.scheduleName}". Bandwidth served: ${fmtBytes(s.totalBandwidthBytes ?? 0)} (${fmtBytes(s.cachedBandwidthBytes ?? 0)} cached).`,
   });
 }
 
@@ -351,6 +351,6 @@ export function renderZtEmail(zt: ZeroTrustData, p: ReportEmailParams): Rendered
     kpis,
     lists,
     summaryTextBlock: summaryParagraphs(p.aiSummary),
-    footerNote: `Sent automatically by the Cloudflare POC Report Builder — schedule "${p.scheduleName}".`,
+    footerNote: `Sent automatically by the Cloudflare Report Builder — schedule "${p.scheduleName}".`,
   });
 }

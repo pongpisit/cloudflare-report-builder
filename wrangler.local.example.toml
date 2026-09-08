@@ -13,7 +13,7 @@
 #   3. Paste the returned database_id below.
 #   4. npm run deploy
 
-name = "cf-poc-report-builder"
+name = "cloudflare-report-builder"
 main = "apps/api/src/index.ts"
 compatibility_date = "2025-03-01"
 compatibility_flags = ["nodejs_compat"]

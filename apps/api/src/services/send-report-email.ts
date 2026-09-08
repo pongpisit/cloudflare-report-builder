@@ -30,7 +30,7 @@ export interface SendReportEmailResult {
   error?: string;
 }
 
-const SENDER_NAME = "Cloudflare POC Reports";
+const SENDER_NAME = "Cloudflare Report Builder";
 
 // Email Sending error codes worth retrying (per the docs: retry these with
 // exponential backoff; validation/sender errors will never succeed on retry).

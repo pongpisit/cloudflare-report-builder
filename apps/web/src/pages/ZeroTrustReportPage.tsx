@@ -1,5 +1,5 @@
 /**
- * ZeroTrustReportPage — Cloudflare One (Zero Trust / SASE) POC Report.
+ * ZeroTrustReportPage — Cloudflare One (Zero Trust / SASE) POC or Assessment Report.
  * Assembles 17 sections covering Access, Gateway, WARP, Tunnels, DLP.
  */
 import { useState, useEffect } from "react";

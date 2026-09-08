@@ -16,7 +16,7 @@ export default defineConfig({
     ["list"],
   ],
   use: {
-    baseURL: process.env.BASE_URL ?? "https://cf-poc-report-builder.pages.dev",
+    baseURL: process.env.BASE_URL ?? "https://cloudflare-report-builder.pages.dev",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

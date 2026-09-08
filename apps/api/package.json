@@ -1,5 +1,5 @@
 {
-  "name": "cf-poc-report-api",
+  "name": "cloudflare-report-builder-api",
   "version": "1.0.0",
   "private": true,
   "scripts": {

@@ -71,15 +71,9 @@ export async function onRequest(context: {
   const { request, params, env } = context;
   const path = (params.path ?? []).join("/");
 
-  const workerUrl = env.API_WORKER_URL;
-  if (!workerUrl) {
-    return Response.json(
-      { error: "API_WORKER_URL is not configured for this Pages project (Settings → Environment variables)." },
-      { status: 500 }
-    );
-  }
-
   // ── /api/me — extract email from Access JWT ───────────────────────────────
+  // Handled entirely locally — never needs API_WORKER_URL — so this keeps
+  // working even if the proxy below isn't configured yet.
   if (path === "me" && request.method === "GET") {
     // 1. Direct header (identity policies)
     const directEmail =
@@ -99,6 +93,14 @@ export async function onRequest(context: {
   }
 
   // ── Proxy everything else to the Worker ───────────────────────────────────
+  const workerUrl = env.API_WORKER_URL;
+  if (!workerUrl) {
+    return Response.json(
+      { error: "API_WORKER_URL is not configured for this Pages project (Settings → Environment variables)." },
+      { status: 500 }
+    );
+  }
+
   const url = new URL(request.url);
   const targetUrl = `${workerUrl}/api/${path}${url.search}`;
 

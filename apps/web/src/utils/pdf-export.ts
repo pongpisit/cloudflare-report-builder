@@ -113,7 +113,7 @@ export async function saveToHtml(zoneName: string): Promise<void> {
 
   const a = document.createElement("a");
   a.href = url;
-  a.download = `cf-poc-report-${zoneName.replace(/[^a-z0-9]/gi, "-")}-${
+  a.download = `cloudflare-report-${zoneName.replace(/[^a-z0-9]/gi, "-")}-${
     new Date().toISOString().split("T")[0]
   }.html`;
   document.body.appendChild(a);

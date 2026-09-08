@@ -85,7 +85,7 @@ export default function AuditPage({ onBack, userEmail }: Props) {
           </button>
           <div className="flex-1 flex items-center gap-2">
             <img src="/cf.png" alt="Cloudflare" className="h-5 object-contain" />
-            <span className="text-sm font-semibold text-cf-navy">POC Report Audit</span>
+            <span className="text-sm font-semibold text-cf-navy">Report Audit</span>
             <span className="text-xs text-cf-gray-400">— Saved Reports</span>
           </div>
           {userEmail && (
