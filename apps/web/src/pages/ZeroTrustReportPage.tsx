@@ -29,8 +29,10 @@ import ZTTopUsersSection         from "./zt-sections/ZTTopUsersSection";
 import ZTIdpSection              from "./zt-sections/ZTIdpSection";
 import ZTWarpPostureSection      from "./zt-sections/ZTWarpPostureSection";
 import ZTWarpConnectivitySection from "./zt-sections/ZTWarpConnectivitySection";
+import ZTDeviceExperienceSection from "./zt-sections/ZTDeviceExperienceSection";
 import ZTTunnelHealthSection     from "./zt-sections/ZTTunnelHealthSection";
 import ZTDlpSection              from "./zt-sections/ZTDlpSection";
+import ZTConfigChangesSection    from "./zt-sections/ZTConfigChangesSection";
 import ZTOpportunitySection      from "./zt-sections/ZTOpportunitySection";
 
 import ZTRecommendationsSection    from "./zt-sections/ZTRecommendationsSection";
@@ -267,8 +269,10 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
               const hasAnomalies = (data.accessAnomalies?.length ?? 0) > 0 || (data.accessIdpBreakdown?.length ?? 0) > 0;
               const hasWarpPosture = data.summary.warpEnrolledDevices > 0 || (data.warpPostureRules?.length ?? 0) > 0;
               const hasWarpConn    = data.summary.warpEnrolledDevices > 0;
+              const hasDex         = (data.dexFleetStatus?.uniqueDevicesTotal ?? 0) > 0;
               const hasTunnels     = data.summary.tunnelsTotal > 0;
               const hasDlp         = (data.dlpProfiles?.length ?? 0) > 0 || (data.summary.casbFindingsCount ?? 0) > 0;
+              const hasConfigChanges = (data.configChanges?.length ?? 0) > 0;
 
               const entries: string[][] = [
                 ["Executive Summary"],
@@ -288,8 +292,10 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
                 ["Identity Providers"],
                 ...(hasWarpPosture ? [["WARP — Device Posture"]] : []),
                 ...(hasWarpConn ? [["WARP — Device Connectivity"]] : []),
+                ...(hasDex ? [["Device Experience (DEX)"]] : []),
                 ...(hasTunnels ? [["Tunnel Health"]] : []),
                 ...(hasDlp ? [["Data Loss Prevention (DLP) & CASB"]] : []),
+                ...(hasConfigChanges ? [["Configuration Changes"]] : []),
                 ["Security Posture Score"],
                 ...(isPoc ? [
                   ["Undeployed Capabilities"],
@@ -433,6 +439,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
         {(data.summary.warpEnrolledDevices > 0) && (
           <ZTWarpConnectivitySection data={data} />
         )}
+        <ZTDeviceExperienceSection data={data} />
         {(data.summary.tunnelsTotal > 0) && (
           <ZTTunnelHealthSection   data={data} />
         )}
@@ -441,6 +448,9 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
         {((data.dlpProfiles?.length ?? 0) > 0 || (data.summary.casbFindingsCount ?? 0) > 0) && (
           <ZTDlpSection            data={data} />
         )}
+
+        {/* GROUP 6 — Operational: what configuration changed this period */}
+        <ZTConfigChangesSection    data={data} />
 
         {/* 8. Security posture score */}
         <ZTPostureScoreSection     data={data} />

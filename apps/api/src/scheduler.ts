@@ -216,7 +216,7 @@ export async function runSchedule(
       rendered = renderAppsecEmail(appsec, params);
       subject = applySubjectTokens(row.subject, { zone: appsec.meta?.zoneName });
     } else {
-      const zt = await generateZerotrustData({ token, accountId, days: row.days, tzOffset });
+      const zt = await generateZerotrustData({ token, accountId, days: row.days, tzOffset, db: env.DB });
       const aiSummary = await generateZtSummary(env, zt, isPoc).catch((e) => {
         console.warn("[scheduler] AI summary failed, sending without it:", String(e));
         return "";

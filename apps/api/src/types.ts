@@ -367,6 +367,58 @@ export interface ZeroTrustData {
   // Recommendations
   recommendations: { priority: "high" | "medium" | "low"; title: string; description: string; benefit: string }[];
 
+  // ── Exact distinct Access counts (GraphQL, high-limit + dedupe) ──────────
+  // `summary.uniqueUsers`/`uniqueApps` are derived from capped top-N lists
+  // (15/10 items) for backward compatibility with existing consumers; these
+  // fields are the more accurate distinct counts over a much larger sample.
+  accessDistinctCounts?: { uniqueUsers: number; uniqueApps: number; sampleLimit: number };
+
+  // ── Gateway HTTP — users responsible for the most blocked requests ────────
+  // Real `email` dimension on gatewayL7RequestsAdaptiveGroups filtered to
+  // action:block. No equivalent user dimension is confirmed available on
+  // the DNS or L4 datasets, so this is HTTP-only — not fabricated for others.
+  gatewayHttpTopBlockedUsers?: { email: string; count: number }[];
+
+  // ── DLP quarantine trend (real; HTTP Gateway `quarantined:1` dimension) ───
+  // Mirrors Cloudflare's own "DLP matches in HTTP requests over time" panel.
+  gatewayDlpQuarantineTimeSeries?: { date: string; count: number }[];
+
+  // ── CASB findings detail (real; REST already returns these fields, only
+  // severity counts were previously surfaced) ──────────────────────────────
+  casbFindingsDetail?: {
+    id?: string; severity: string; type: string; resourceName: string; integrationId?: string;
+  }[];
+
+  // ── Configuration changes (real; REST /accounts/{id}/logs/audit filtered
+  // to Zero-Trust-relevant products within the report window) ─────────────
+  configChanges?: {
+    id: string; time: string; actorEmail: string; actionType: string;
+    description: string; product: string; result: string;
+  }[];
+
+  // ── DEX fleet status (real; REST /accounts/{id}/dex/fleet-status/live —
+  // live device telemetry, up to 60 minutes back, NOT the report window) ──
+  dexFleetStatus?: {
+    uniqueDevicesTotal: number;
+    byStatus: { value: string; count: number }[];
+    byPlatform: { value: string; count: number }[];
+    byMode: { value: string; count: number }[];
+    byVersion: { value: string; count: number }[];
+    byColo: { value: string; count: number }[];
+  } | null;
+
+  // ── Baseline / period-over-period comparison (persisted D1 snapshot) ─────
+  baseline?: {
+    previousGeneratedAt: string | null;
+    previousDays: number | null;
+    deltas: Record<string, { previous: number; current: number; changePct: number | null }>;
+  } | null;
+
+  // ── Data confidence notes surfaced per-section (time window, sampling
+  // caps, or known unsupported metrics) so "0" is never confused with "not
+  // measured". Keyed by an informal section id, not a strict enum. ─────────
+  dataConfidence?: Record<string, string>;
+
   errors: Record<string, string>;
 }
 

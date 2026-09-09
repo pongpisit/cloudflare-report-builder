@@ -1,4 +1,5 @@
-import { AlertTriangle, Shield } from "lucide-react";
+import { AlertTriangle, Shield, Info } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import type { ZeroTrustData } from "../../types";
 import { formatNumber } from "../../utils/formatters";
 import SectionHeader from "../../components/SectionHeader";
@@ -10,7 +11,10 @@ const SEVERITY_COLORS: Record<string, string> = {
 export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
   const profiles = data.dlpProfiles;
   const casbBySeverity = data.casbFindingsBySeverity ?? [];
+  const casbDetail = data.casbFindingsDetail ?? [];
+  const quarantineSeries = data.gatewayDlpQuarantineTimeSeries ?? [];
   const s = data.summary;
+  const dlpNote = data.dataConfidence?.dlpProfiles;
 
   if (profiles.length === 0 && (s.casbFindingsCount ?? 0) === 0) return (
     <section className="report-section">
@@ -76,6 +80,65 @@ export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
           </div>
         )}
       </div>
+
+      {/* Real DLP outcome signal: HTTP requests quarantined by a DLP action
+          over time — an indirect but genuinely measured trend (Cloudflare
+          exposes no per-match/per-profile dataset via GraphQL). */}
+      {quarantineSeries.some((d) => d.count > 0) && (
+        <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4 mt-5">
+          <h3 className="text-sm font-semibold text-cf-navy mb-3">DLP Quarantine Actions Over Time</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={quarantineSeries} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
+              <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(v) => v.slice(5)}/>
+              <YAxis tick={{ fontSize: 10 }}/>
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v: number) => formatNumber(v)}/>
+              <Bar dataKey="count" name="Quarantined requests" fill="#8B5CF6" radius={[3,3,0,0]}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* CASB finding detail — the REST API already returns type/resource/
+          integration per finding; previously only tallied into severity
+          counts and discarded. */}
+      {casbDetail.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4 mt-5">
+          <h3 className="text-sm font-semibold text-cf-navy mb-3">CASB Findings ({casbDetail.length}{casbDetail.length === 50 ? "+" : ""})</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wide text-cf-gray-400 border-b border-cf-gray-100">
+                  <th className="py-1.5 pr-3">Severity</th>
+                  <th className="py-1.5 pr-3">Type</th>
+                  <th className="py-1.5">Resource</th>
+                </tr>
+              </thead>
+              <tbody>
+                {casbDetail.slice(0, 25).map((f, i) => (
+                  <tr key={f.id ?? i} className="border-b border-cf-gray-50 last:border-0">
+                    <td className="py-1.5 pr-3">
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium capitalize"
+                        style={{ color: SEVERITY_COLORS[f.severity.toLowerCase()] ?? SEVERITY_COLORS.unknown, backgroundColor: `${SEVERITY_COLORS[f.severity.toLowerCase()] ?? SEVERITY_COLORS.unknown}14` }}>
+                        {f.severity}
+                      </span>
+                    </td>
+                    <td className="py-1.5 pr-3 text-cf-navy">{f.type}</td>
+                    <td className="py-1.5 text-cf-gray-500 font-mono truncate max-w-xs">{f.resourceName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {dlpNote && profiles.length > 0 && (
+        <div className="print:hidden flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mt-5">
+          <Info size={13} className="text-slate-400 flex-shrink-0 mt-0.5"/>
+          <p className="text-[11px] text-slate-500 leading-relaxed">{dlpNote}</p>
+        </div>
+      )}
     </section>
   );
 }

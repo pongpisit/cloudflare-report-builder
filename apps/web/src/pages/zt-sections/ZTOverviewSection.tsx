@@ -2,6 +2,7 @@ import { Shield, Users, Globe, Lock, AlertTriangle, CheckCircle2, TrendingUp } f
 import type { ZeroTrustData } from "../../types";
 import { formatNumber } from "../../utils/formatters";
 import SectionHeader from "../../components/SectionHeader";
+import BaselineDelta from "../../components/BaselineDelta";
 
 function fmtBig(n: number): string {
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
@@ -26,6 +27,7 @@ export default function ZTOverviewSection({ data, isPoc = true }: { data: ZeroTr
       color: "#ba0816",
       icon: <Shield size={18}/>,
       highlight: true,
+      deltaField: "gatewayDnsBlocked",
     },
     {
       label: "Auth Events",
@@ -34,6 +36,7 @@ export default function ZTOverviewSection({ data, isPoc = true }: { data: ZeroTr
       color: "#3B82F6",
       icon: <Lock size={18}/>,
       highlight: false,
+      deltaField: "totalAuthEvents",
     },
     {
       label: "Users Protected",
@@ -42,6 +45,7 @@ export default function ZTOverviewSection({ data, isPoc = true }: { data: ZeroTr
       color: "#10B981",
       icon: <Users size={18}/>,
       highlight: false,
+      deltaField: "uniqueUsers",
     },
     {
       label: "Auth Blocked",
@@ -50,6 +54,8 @@ export default function ZTOverviewSection({ data, isPoc = true }: { data: ZeroTr
       color: s.blockedAuthEvents > 0 ? "#DC2626" : "#6B7280",
       icon: <Shield size={18}/>,
       highlight: false,
+      deltaField: "blockedAuthEvents",
+      invert: true,
     },
     ...(( s.httpRbiSessions ?? 0) > 0 ? [{
       label: "RBI Sessions",
@@ -117,7 +123,10 @@ export default function ZTOverviewSection({ data, isPoc = true }: { data: ZeroTr
               borderLeft: k.highlight ? "3px solid #ba0816" : "3px solid transparent",
             }}>
             <p style={{ fontSize: 10, fontWeight: 400, letterSpacing: "0.09rem", textTransform: "uppercase", color: "#5d5e65", marginBottom: 8 }}>{k.label}</p>
-            <p style={{ fontSize: 26, fontWeight: 800, color: k.highlight ? "#ba0816" : k.color, lineHeight: 1, marginBottom: 6 }}>{k.value}</p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <p style={{ fontSize: 26, fontWeight: 800, color: k.highlight ? "#ba0816" : k.color, lineHeight: 1, marginBottom: 6 }}>{k.value}</p>
+              {"deltaField" in k && <BaselineDelta baseline={data.baseline} field={k.deltaField} invert={"invert" in k && !!k.invert} />}
+            </div>
             <p style={{ fontSize: 10, color: "#5d5e65" }}>{k.sub}</p>
           </div>
         ))}

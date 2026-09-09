@@ -419,6 +419,43 @@ export async function fetchAccessDailyActiveUsers(
   } catch { return []; }
 }
 
+/**
+ * Exact distinct Access users/apps over the report period, via a much
+ * higher-limit GraphQL query than the REST-log-derived `deriveAccessTop*`
+ * helpers above (which are capped at the latest 1,000 REST log rows before
+ * even taking a top-N slice). Still bounded by GraphQL's own per-query
+ * `limit` (5,000 rows here) — `sampleLimit` is returned so callers/UI can be
+ * honest about "distinct count over up to N rows" rather than claiming a
+ * literal exhaustive count on very high-volume accounts.
+ */
+export async function fetchAccessDistinctCounts(
+  token: string, accountId: string, since: string, until: string
+): Promise<{ uniqueUsers: number; uniqueApps: number; sampleLimit: number }> {
+  const sampleLimit = 5000;
+  const query = `{
+    viewer {
+      accounts(filter: { accountTag: "${accountId}" }) {
+        accessLoginRequestsAdaptiveGroups(
+          limit: ${sampleLimit}
+          filter: { datetime_geq: "${since}", datetime_lt: "${until}" }
+        ) { dimensions { userUuid appId } }
+      }
+    }
+  }`;
+  try {
+    const data = await gqlAccount<{
+      accessLoginRequestsAdaptiveGroups: Array<{ dimensions: { userUuid: string; appId: string } }>;
+    }>(token, query);
+    const users = new Set<string>();
+    const apps = new Set<string>();
+    for (const r of data.accessLoginRequestsAdaptiveGroups ?? []) {
+      if (r.dimensions.userUuid) users.add(r.dimensions.userUuid);
+      if (r.dimensions.appId) apps.add(r.dimensions.appId);
+    }
+    return { uniqueUsers: users.size, uniqueApps: apps.size, sampleLimit };
+  } catch { return { uniqueUsers: 0, uniqueApps: 0, sampleLimit }; }
+}
+
 // =============================================================================
 // GATEWAY DNS — gatewayResolverQueriesAdaptiveGroups
 // =============================================================================
@@ -901,6 +938,81 @@ export async function fetchGatewayHttpTopAllowed(
   token: string, accountId: string, since: string, until: string, limit = 15
 ): Promise<{ domain: string; count: number }[]> {
   return fetchGatewayHttpTopByAction(token, accountId, since, until, ["allow"], limit);
+}
+
+/**
+ * Top users responsible for the most blocked HTTP requests. Real `email`
+ * dimension on gatewayL7RequestsAdaptiveGroups (already confirmed live and
+ * used by fetchShadowItUserMappings above), filtered to action:block. No
+ * equivalent user/email dimension is confirmed on the DNS or L4 datasets —
+ * intentionally HTTP-only rather than guessed for the others.
+ */
+export async function fetchGatewayHttpTopBlockedUsers(
+  token: string, accountId: string, since: string, until: string, limit = 15
+): Promise<{ email: string; count: number }[]> {
+  const query = `{
+    viewer {
+      accounts(filter: { accountTag: "${accountId}" }) {
+        gatewayL7RequestsAdaptiveGroups(
+          limit: 500
+          filter: { datetime_geq: "${since}", datetime_lt: "${until}", action_in: ["block"], email_neq: "" }
+          orderBy: [count_DESC]
+        ) { count dimensions { email } }
+      }
+    }
+  }`;
+  try {
+    const data = await gqlAccount<{
+      gatewayL7RequestsAdaptiveGroups: Array<{ count: number; dimensions: { email: string } }>;
+    }>(token, query);
+    const byUser = new Map<string, number>();
+    for (const r of data.gatewayL7RequestsAdaptiveGroups ?? []) {
+      const email = r.dimensions.email;
+      if (!email) continue;
+      byUser.set(email, (byUser.get(email) ?? 0) + r.count);
+    }
+    return Array.from(byUser.entries())
+      .map(([email, count]) => ({ email, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+  } catch { return []; }
+}
+
+/**
+ * DLP quarantine trend over time — mirrors Cloudflare's own "DLP matches in
+ * HTTP requests over time" Data Security Analytics panel. Reuses the same
+ * confirmed-live `quarantined:1` filter already used for the summary total
+ * (see fetchGatewayHttpSummary above), just grouped by datetimeHour instead
+ * of a single aggregate.
+ */
+export async function fetchGatewayDlpQuarantineTimeSeries(
+  token: string, accountId: string, since: string, until: string
+): Promise<{ date: string; count: number }[]> {
+  const query = `{
+    viewer {
+      accounts(filter: { accountTag: "${accountId}" }) {
+        gatewayL7RequestsAdaptiveGroups(
+          limit: 720
+          filter: { datetime_geq: "${since}", datetime_lt: "${until}", quarantined: 1 }
+          orderBy: [datetimeHour_ASC]
+        ) { count dimensions { datetimeHour } }
+      }
+    }
+  }`;
+  try {
+    const data = await gqlAccount<{
+      gatewayL7RequestsAdaptiveGroups: Array<{ count: number; dimensions: { datetimeHour: string } }>;
+    }>(token, query);
+    const byDate = new Map<string, number>();
+    for (const r of data.gatewayL7RequestsAdaptiveGroups ?? []) {
+      const date = r.dimensions.datetimeHour?.split("T")[0] ?? "";
+      if (!date) continue;
+      byDate.set(date, (byDate.get(date) ?? 0) + r.count);
+    }
+    return Array.from(byDate.entries())
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  } catch { return []; }
 }
 
 /**

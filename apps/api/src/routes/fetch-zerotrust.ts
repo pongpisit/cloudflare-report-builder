@@ -14,13 +14,14 @@ import {
   getCloudflaredTunnels, getTunnelRoutes,
   getDlpProfiles, getMcpPortals,
   getAccessUsers, getCasbFindings, getAlertsHistory,
+  getAccountAuditLogs, getDexFleetStatusLive,
   type CfAccessApp, type CfGatewayRule,
 } from "../services/cf-rest";
 import {
   fetchAccessAuthTimeSeries, fetchAccessLogs,
   deriveAccessTopApps, deriveAccessTopUsers, deriveAccessGeoDistribution,
   deriveAccessTopSourceIps, deriveAccessAuthMethodBreakdown,
-  fetchAccessDailyActiveUsers,
+  fetchAccessDailyActiveUsers, fetchAccessDistinctCounts,
   fetchAccessIdentityProviderBreakdown, fetchAccessAppBreakdown,
   fetchAccessFailedLoginDetails, detectAccessAnomalies,
   fetchGatewayDnsTimeSeries, fetchGatewayDnsTopBlocked, fetchGatewayDnsTopAllowed,
@@ -28,6 +29,7 @@ import {
   fetchGatewayDnsTopByPolicy, fetchGatewayDnsResolverBreakdown,
   fetchGatewayHttpTimeSeries, fetchGatewayHttpTopBlocked, fetchGatewayHttpTopAllowed,
   fetchGatewayHttpTopBlockedCategories, fetchGatewayHttpSummary, fetchGatewayHttpStatusCodes,
+  fetchGatewayHttpTopBlockedUsers, fetchGatewayDlpQuarantineTimeSeries,
   fetchGatewayL4Data,
   fetchShadowItData,
   fetchWarpDeviceStatusBreakdown, fetchWarpDeviceStatusTimeSeries, fetchWarpDeviceLatestStatus,
@@ -36,6 +38,7 @@ import {
 } from "../services/cf-zerotrust-graphql";
 
 import { last30Days as l30 } from "../services/cf-graphql";
+import { getBaseline, saveSnapshot } from "../services/zt-snapshots";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
@@ -65,7 +68,7 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
   const days = ALLOWED_DAYS.includes(rawDays as typeof ALLOWED_DAYS[number])
     ? (rawDays as typeof ALLOWED_DAYS[number]) : 30;
 
-  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset });
+  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset, db: c.env.DB });
   return c.json({ ok: true, zerotrust });
 }
 
@@ -77,8 +80,11 @@ export async function generateZerotrustData(input: {
   accountId: string;
   days: number;
   tzOffset: number;
+  /** D1 binding — optional. Powers baseline/period-over-period comparison;
+   *  report generation works fully without it, just without deltas. */
+  db?: D1Database;
 }): Promise<ZeroTrustData> {
-  const { token, accountId, days, tzOffset } = input;
+  const { token, accountId, days, tzOffset, db } = input;
 
   const { since, until, sinceTs, untilTs } = l30(days, tzOffset);
 
@@ -114,6 +120,8 @@ export async function generateZerotrustData(input: {
     getAccessUsers(token, accountId),
     getCasbFindings(token, accountId),
     getAlertsHistory(token, accountId, 25),
+    getAccountAuditLogs(token, accountId, adSince, adUntil),
+    getDexFleetStatusLive(token, accountId, 60),
     fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then((r) => r.json() as Promise<{ result?: { name?: string } }>),
@@ -124,6 +132,7 @@ export async function generateZerotrustData(input: {
     warpDevicesR, postureRulesR, tunnelsR, tunnelRoutesR, dlpProfilesR,
     mcpPortalsR,
     accessUsersR, casbFindingsR, alertsHistoryR,
+    auditLogsR, dexFleetStatusR,
     accountInfoR,
   ] = config;
 
@@ -147,21 +156,33 @@ export async function generateZerotrustData(input: {
   const rawAlertsHistory = sg(alertsHistoryR, "alertsHistory", []) as Array<{
     id: string; name: string; alert_type: string; sent: string; silenced?: boolean;
   }>;
+  const rawAuditLogs = sg(auditLogsR, "auditLogs", []) as Array<{
+    id: string;
+    action: { description?: string; result?: string; time: string; type?: string };
+    actor: { email?: string; type?: string; context?: string };
+    resource?: { product?: string; type?: string };
+  }>;
+  const dexFleetStatus = sg(dexFleetStatusR, "dexFleetStatus", null);
   const accountName = (accountInfoR.status === "fulfilled"
     ? (accountInfoR.value as { result?: { name?: string } })?.result?.name
     : undefined) ?? accountId;
 
-  // Access policies per app (cap at 10 apps)
+  // Access policies per app — same 50-app cap as the displayed app list
+  // (previously capped at only the first 10 apps, which meant MFA coverage,
+  // policy-action totals, and policy counts for apps 11-50 were silently
+  // incomplete rather than genuinely zero).
+  const POLICY_FETCH_CAP = 50;
   const policyResults = await Promise.allSettled(
-    rawApps.slice(0, 10).map((app) => getAccessPolicies(token, accountId, app.id))
+    rawApps.slice(0, POLICY_FETCH_CAP).map((app) => getAccessPolicies(token, accountId, app.id))
   );
 
   // ── GraphQL analytics (all parallel) ──────────────────────────────────────
   const [
-    authSeriesR, accessLogsR, dailyActiveR,
+    authSeriesR, accessLogsR, dailyActiveR, distinctCountsR,
     idpBreakdownR, appBreakdownR, failedDetailsR,
     dnsSummaryR, dnsDailyR, dnsBreakdownR, dnsTopDomsR, dnsTopAllowedR, dnsCatsR, dnsTopPoliciesR,
     httpSummaryR, httpDailyR, httpTopDomsR, httpTopAllowedR, httpCatsR, httpStatusCodesR,
+    httpTopBlockedUsersR, dlpQuarantineSeriesR,
     l4DataR,
     shadowItR,
     warpStatusBreakdownR, warpStatusSeriesR, warpLatestStatusR,
@@ -172,6 +193,7 @@ export async function generateZerotrustData(input: {
     fetchAccessAuthTimeSeries(token, accountId, adSince, adUntil),
     fetchAccessLogs(token, accountId), // single fetch — reused below for top apps/users/geo/IPs/auth method
     fetchAccessDailyActiveUsers(token, accountId, adSince, adUntil),
+    fetchAccessDistinctCounts(token, accountId, adSince, adUntil),
     // Access Audit enrichment (cf-reporting patterns)
     fetchAccessIdentityProviderBreakdown(token, accountId, adSince, adUntil),
     fetchAccessAppBreakdown(token, accountId, adSince, adUntil),
@@ -192,6 +214,8 @@ export async function generateZerotrustData(input: {
     fetchGatewayHttpTopAllowed(token, accountId, adSince, adUntil, 15),
     fetchGatewayHttpTopBlockedCategories(token, accountId, adSince, adUntil, 10),
     fetchGatewayHttpStatusCodes(token, accountId, adSince, adUntil),
+    fetchGatewayHttpTopBlockedUsers(token, accountId, adSince, adUntil, 15),
+    fetchGatewayDlpQuarantineTimeSeries(token, accountId, adSince, adUntil),
     // Gateway L4
     fetchGatewayL4Data(token, accountId, adSince, adUntil),
     // Shadow IT
@@ -219,6 +243,7 @@ export async function generateZerotrustData(input: {
   const topSourceIps    = deriveAccessTopSourceIps(accessLogs, adSince, adUntil, 20);
   const authMethodBreak = deriveAccessAuthMethodBreakdown(accessLogs, adSince, adUntil);
   const dailyActive    = sg(dailyActiveR,   "dailyActive",   []);
+  const distinctCounts = sg(distinctCountsR, "distinctCounts", { uniqueUsers: 0, uniqueApps: 0, sampleLimit: 0 });
   const idpBreakdown   = sg(idpBreakdownR,  "idpBreakdown",  []);
   const appBreakdown   = sg(appBreakdownR,  "appBreakdown",  []);
   const failedDetails  = sg(failedDetailsR, "failedDetails", []);
@@ -235,6 +260,8 @@ export async function generateZerotrustData(input: {
   const httpTopAllowed = sg(httpTopAllowedR,"httpTopAllowed", []);
   const httpCats       = sg(httpCatsR,      "httpCats",    []);
   const httpStatusCodes = sg(httpStatusCodesR, "httpStatusCodes", []);
+  const httpTopBlockedUsers = sg(httpTopBlockedUsersR, "httpTopBlockedUsers", []);
+  const dlpQuarantineSeries = sg(dlpQuarantineSeriesR, "dlpQuarantineSeries", []);
   const l4Data         = sg(l4DataR,        "l4Data",      { timeSeries: [], blockedDestinations: [], protocols: [], sourceCountries: [], portBreakdown: [] });
   const shadowIt       = sg(shadowItR,      "shadowIt",    { discoveredApps: [], categoryBreakdown: [], userAppMappings: [], appStatuses: {} });
   const warpStatusBreakdown = sg(warpStatusBreakdownR, "warpStatusBreakdown", []);
@@ -324,6 +351,57 @@ export async function generateZerotrustData(input: {
     const sev = f.severity || "unknown";
     casbFindingsBySeverity.set(sev, (casbFindingsBySeverity.get(sev) ?? 0) + 1);
   }
+  // Real per-finding detail (severity/type/resource/integration) — the REST
+  // response already includes these fields; previously only tallied into
+  // severity counts and discarded, leaving no way to see WHAT was found.
+  const casbFindingsDetail = (rawCasbFindings as Array<{
+    id?: string; integration_id?: string; severity?: string; type?: string; resource_name?: string;
+  }>)
+    .slice(0, 50)
+    .map((f) => ({
+      id: f.id,
+      severity: f.severity || "unknown",
+      type: f.type || "Unknown",
+      resourceName: f.resource_name || "Unknown resource",
+      integrationId: f.integration_id,
+    }));
+
+  // ── Configuration changes (real; REST /accounts/{id}/logs/audit, filtered
+  // to Zero-Trust-relevant products within the report window) ───────────────
+  const configChanges = rawAuditLogs
+    .map((e) => ({
+      id: e.id,
+      time: e.action?.time ?? "",
+      actorEmail: e.actor?.email || (e.actor?.type ? `(${e.actor.type})` : "Unknown"),
+      actionType: e.action?.type || "unknown",
+      description: e.action?.description || "",
+      product: e.resource?.product || "unknown",
+      result: e.action?.result || "unknown",
+    }))
+    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+    .slice(0, 50);
+
+  // ── DEX fleet status (real; live device telemetry, up to 60 min back) ─────
+  const mapDexStat = (arr: Array<{ value: string; uniqueDevicesTotal: number }> | undefined) =>
+    (arr ?? []).map((s) => ({ value: s.value, count: s.uniqueDevicesTotal }));
+  const dexFleetStatusObj = dexFleetStatus as {
+    uniqueDevicesTotal: number;
+    byStatus: Array<{ value: string; uniqueDevicesTotal: number }>;
+    byPlatform: Array<{ value: string; uniqueDevicesTotal: number }>;
+    byMode: Array<{ value: string; uniqueDevicesTotal: number }>;
+    byVersion: Array<{ value: string; uniqueDevicesTotal: number }>;
+    byColo: Array<{ value: string; uniqueDevicesTotal: number }>;
+  } | null;
+  const dexFleetStatusMapped = dexFleetStatusObj
+    ? {
+        uniqueDevicesTotal: dexFleetStatusObj.uniqueDevicesTotal ?? 0,
+        byStatus:   mapDexStat(dexFleetStatusObj.byStatus),
+        byPlatform: mapDexStat(dexFleetStatusObj.byPlatform),
+        byMode:     mapDexStat(dexFleetStatusObj.byMode),
+        byVersion:  mapDexStat(dexFleetStatusObj.byVersion),
+        byColo:     mapDexStat(dexFleetStatusObj.byColo),
+      }
+    : null;
 
   // ── Recent account-wide alerts (real, from /alerting/v3/history) ───────────
   const recentAlerts = rawAlertsHistory
@@ -343,7 +421,7 @@ export async function generateZerotrustData(input: {
   const tunnelsHealthy = tunnelList.filter((t) => t.status === "healthy").length;
 
   // ── Access apps/policies ──────────────────────────────────────────────────
-  const accessApps = rawApps.slice(0, 50).map((app, i) => {
+  const accessApps = rawApps.slice(0, POLICY_FETCH_CAP).map((app, i) => {
     const appPolicies = policyResults[i]?.status === "fulfilled" ? policyResults[i].value : [];
     return {
       id: app.id, name: app.name,
@@ -356,7 +434,7 @@ export async function generateZerotrustData(input: {
     };
   });
 
-  const accessPolicies = rawApps.slice(0, 10).flatMap((app, i) => {
+  const accessPolicies = rawApps.slice(0, POLICY_FETCH_CAP).flatMap((app, i) => {
     const pols = policyResults[i]?.status === "fulfilled" ? policyResults[i].value as Array<{ id: string; name: string; decision: string; require?: Array<{ mfa?: unknown }>; precedence?: number }> : [];
     return pols.map((p) => ({
       id: p.id, appId: app.id, appName: app.name, name: p.name,
@@ -412,7 +490,12 @@ export async function generateZerotrustData(input: {
     .filter((a) => mcpAppIdentifiers.has(a.name))
     .reduce((s, a) => s + a.requests, 0);
 
-  // Map policyId → queriesTotal from DNS analytics
+  // Map policy NAME → queriesTotal from DNS analytics.
+  // BUG FIX: fetchGatewayDnsTopByPolicy's `policyId` field actually holds the
+  // GraphQL `policyName` dimension value (there is no policyId dimension on
+  // gatewayResolverQueriesAdaptiveGroups) — it was previously being compared
+  // against the REST rule's `id` (a UUID), which can never match a name
+  // string, so this annotation was silently always empty. Match by `r.name`.
   const policyQueryMap = new Map<string, number>();
   for (const p of dnsTopPolics) policyQueryMap.set(p.policyId, p.queriesTotal);
 
@@ -422,8 +505,8 @@ export async function generateZerotrustData(input: {
     action: r.action, enabled: r.enabled !== false,
     filters: r.filters ?? [],
     expression: r.description
-      ? `${r.description}${policyQueryMap.has(r.id) ? ` [${policyQueryMap.get(r.id)!.toLocaleString()} queries]` : ""}`
-      : policyQueryMap.has(r.id) ? `${policyQueryMap.get(r.id)!.toLocaleString()} queries in period` : "",
+      ? `${r.description}${policyQueryMap.has(r.name) ? ` [${policyQueryMap.get(r.name)!.toLocaleString()} queries]` : ""}`
+      : policyQueryMap.has(r.name) ? `${policyQueryMap.get(r.name)!.toLocaleString()} queries in period` : "",
   }));
 
   // ── Generative AI / Shadow AI usage ────────────────────────────────────────
@@ -593,11 +676,33 @@ export async function generateZerotrustData(input: {
     dlpProfiles: (rawDlpProfs as Array<{ id: string; name: string; type: "custom"|"predefined" }>).map((p) => ({ id: p.id, name: p.name, type: p.type, matchCount: 0 })),
     // CASB
     casbFindingsBySeverity: Array.from(casbFindingsBySeverity.entries()).map(([severity, count]) => ({ severity, count })),
+    casbFindingsDetail,
     // Alerts
     recentAlerts,
     recommendations,
+    // Data-quality additions
+    accessDistinctCounts: distinctCounts as ZeroTrustData["accessDistinctCounts"],
+    gatewayHttpTopBlockedUsers: httpTopBlockedUsers as ZeroTrustData["gatewayHttpTopBlockedUsers"],
+    gatewayDlpQuarantineTimeSeries: dlpQuarantineSeries as ZeroTrustData["gatewayDlpQuarantineTimeSeries"],
+    configChanges,
+    dexFleetStatus: dexFleetStatusMapped,
+    dataConfidence: {
+      mfaChallenges: "No Cloudflare API or GraphQL dataset exposes MFA-challenge events for Access logins. This value is always 0 and does not mean MFA is unused — it means MFA usage is not independently measurable via API today.",
+      accessTopUsers: "Derived from the latest 1,000 Access authentication log rows (REST), then ranked. On high-volume accounts this is a recent sample, not the full period. See accessDistinctCounts for a higher-limit distinct-count cross-check.",
+      warpPostureRules: "Lists configured posture rules only. Per-device pass/fail evaluation results are not exposed by the standard REST API — Enterprise accounts can obtain this via Logpush (Device Posture Results dataset).",
+      dlpProfiles: "Lists configured DLP profiles only (no per-period match counts are exposed by GraphQL). See gatewayDlpQuarantineTimeSeries for a real, if indirect, HTTP-quarantine-action trend.",
+      dexFleetStatus: "Live device telemetry from the last 60 minutes — NOT scoped to the report period (since/until). Use it as a right-now device-health snapshot alongside the historical WARP connection-status trend.",
+      gatewayHttpTopBlockedUsers: "HTTP Gateway only — no equivalent per-user attribution is confirmed available on the DNS or Network (L4) Gateway datasets.",
+    },
     errors: fetchErrors,
   };
+
+  // ── Baseline / period-over-period comparison ──────────────────────────────
+  // Compare against the most recent prior snapshot for this account (if any),
+  // then persist this generation as the new snapshot. Both steps fail soft —
+  // a D1 error here never blocks the report itself.
+  zerotrust.baseline = await getBaseline(db, accountId, zerotrust.meta.generatedAt, zerotrust.summary);
+  await saveSnapshot(db, accountId, zerotrust.meta.generatedAt, since, until, days, zerotrust.summary);
 
   return zerotrust;
 }

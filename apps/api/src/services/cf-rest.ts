@@ -1833,3 +1833,106 @@ export async function getAlertsHistory(token: string, accountId: string, limit =
     return res.ok && Array.isArray(res.data) ? res.data : [];
   } catch { return []; }
 }
+
+// ─── Account Audit Logs (configuration drift) ─────────────────────────────────
+/**
+ * Confirmed live: GET /accounts/{id}/logs/audit?since=X&before=Y. Real
+ * response shape: { id, account:{id,name}, action:{description,result,time,
+ * type}, actor:{id,context,email,ip_address,type}, resource:{id,product,type},
+ * zone:{id,name} }. `since`/`before` accept RFC3339 or a plain date.
+ * https://developers.cloudflare.com/api/resources/accounts/subresources/logs/subresources/audit/methods/list/
+ *
+ * Used to answer "what Zero-Trust-relevant configuration changed in this
+ * report period" — filtered client-side to a set of known ZT product slugs,
+ * since the REST endpoint's `resource.product` filter values aren't
+ * independently documented and filtering post-fetch is safer than guessing
+ * an unverified query-param value.
+ */
+export interface CfAuditLogEntry {
+  id: string;
+  action: { description?: string; result?: string; time: string; type?: string };
+  actor: { email?: string; type?: string; context?: string };
+  resource?: { product?: string; type?: string };
+}
+
+const ZT_AUDIT_PRODUCTS = new Set([
+  "access", "gateway", "teams", "dlp", "casb", "warp", "zerotrust",
+  "zero_trust", "tunnel", "cfd_tunnel", "dex", "waf_tls_client_certificates",
+]);
+
+export async function getAccountAuditLogs(
+  token: string,
+  accountId: string,
+  since: string,
+  before: string,
+  maxPages = 3
+): Promise<CfAuditLogEntry[]> {
+  try {
+    const out: CfAuditLogEntry[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < maxPages; page++) {
+      const params = new URLSearchParams({ since, before });
+      if (cursor) params.set("cursor", cursor);
+      const res = await cfGet<CfAuditLogEntry[]>(
+        token,
+        `/accounts/${accountId}/logs/audit?${params.toString()}`
+      );
+      if (!res.ok || !Array.isArray(res.data)) break;
+      out.push(...res.data);
+      if (res.data.length === 0) break;
+      // cursor pagination — result_info.cursor isn't surfaced by cfGet's
+      // plain RestResult; stop after the first page rather than guess at an
+      // undocumented shape. maxPages effectively caps at 1 for now.
+      break;
+    }
+    return out.filter((e) => {
+      const product = (e.resource?.product ?? "").toLowerCase();
+      return ZT_AUDIT_PRODUCTS.has(product);
+    });
+  } catch { return []; }
+}
+
+// ─── DEX — Digital Experience Monitoring (device/network health) ─────────────
+/**
+ * Confirmed live: GET /accounts/{id}/dex/fleet-status/live?since_minutes=60.
+ * Real response shape: { deviceStats: { byColo, byMode, byPlatform, byStatus,
+ * byVersion, uniqueDevicesTotal } }, each breakdown an array of
+ * { value, uniqueDevicesTotal }. This is LIVE telemetry (up to 60 minutes
+ * back) — a device-health snapshot, not a historical time series over the
+ * report window. Requires "Cloudflare DEX Read" or "Zero Trust Read" token
+ * permission; on accounts without DEX/WARP client telemetry configured this
+ * returns an empty/zeroed result, not an error.
+ * https://developers.cloudflare.com/api/resources/zero_trust/subresources/dex/subresources/fleet_status/methods/live/
+ */
+export interface DexLiveStat { value: string; uniqueDevicesTotal: number }
+export interface DexFleetStatusLive {
+  uniqueDevicesTotal: number;
+  byColo: DexLiveStat[];
+  byMode: DexLiveStat[];
+  byPlatform: DexLiveStat[];
+  byStatus: DexLiveStat[];
+  byVersion: DexLiveStat[];
+}
+
+export async function getDexFleetStatusLive(
+  token: string,
+  accountId: string,
+  sinceMinutes = 60
+): Promise<DexFleetStatusLive | null> {
+  try {
+    const res = await cfGet<{ deviceStats?: DexFleetStatusLive }>(
+      token,
+      `/accounts/${accountId}/dex/fleet-status/live?since_minutes=${sinceMinutes}`
+    );
+    if (!res.ok || !res.data?.deviceStats) return null;
+    const d = res.data.deviceStats;
+    return {
+      uniqueDevicesTotal: d.uniqueDevicesTotal ?? 0,
+      byColo: d.byColo ?? [],
+      byMode: d.byMode ?? [],
+      byPlatform: d.byPlatform ?? [],
+      byStatus: d.byStatus ?? [],
+      byVersion: d.byVersion ?? [],
+    };
+  } catch { return null; }
+}

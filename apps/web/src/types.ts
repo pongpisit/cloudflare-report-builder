@@ -580,8 +580,35 @@ export interface ZeroTrustData {
   // DLP / CASB
   dlpProfiles: DlpProfile[];
   casbFindingsBySeverity: { severity: string; count: number }[];
+  casbFindingsDetail?: {
+    id?: string; severity: string; type: string; resourceName: string; integrationId?: string;
+  }[];
   recentAlerts: { id: string; name: string; alertType: string; sentAt: string; silenced: boolean }[];
   recommendations: { priority: "high" | "medium" | "low"; title: string; description: string; benefit: string }[];
+
+  // ── Data-quality / new-perspective additions ──────────────────────────────
+  accessDistinctCounts?: { uniqueUsers: number; uniqueApps: number; sampleLimit: number };
+  gatewayHttpTopBlockedUsers?: { email: string; count: number }[];
+  gatewayDlpQuarantineTimeSeries?: { date: string; count: number }[];
+  configChanges?: {
+    id: string; time: string; actorEmail: string; actionType: string;
+    description: string; product: string; result: string;
+  }[];
+  dexFleetStatus?: {
+    uniqueDevicesTotal: number;
+    byStatus: { value: string; count: number }[];
+    byPlatform: { value: string; count: number }[];
+    byMode: { value: string; count: number }[];
+    byVersion: { value: string; count: number }[];
+    byColo: { value: string; count: number }[];
+  } | null;
+  baseline?: {
+    previousGeneratedAt: string | null;
+    previousDays: number | null;
+    deltas: Record<string, { previous: number; current: number; changePct: number | null }>;
+  } | null;
+  dataConfidence?: Record<string, string>;
+
   errors: Record<string, string>;
 }
 

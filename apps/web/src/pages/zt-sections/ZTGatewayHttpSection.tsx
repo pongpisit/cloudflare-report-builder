@@ -14,6 +14,7 @@ export default function ZTGatewayHttpSection({ data }: { data: ZeroTrustData }) 
   const topAllowed = data.gatewayHttpTopAllowedDomains ?? [];
   const cats      = data.gatewayHttpTopBlockedCategories;
   const statusCodes = data.gatewayHttpStatusCodes ?? [];
+  const topBlockedUsers = data.gatewayHttpTopBlockedUsers ?? [];
   const s         = data.summary;
   if (series.length === 0 && topDoms.length === 0) return null;
 
@@ -145,6 +146,33 @@ export default function ZTGatewayHttpSection({ data }: { data: ZeroTrustData }) 
                       <td className="px-4 py-1.5 text-cf-gray-400 font-mono text-[11px]">{i+1}</td>
                       <td className="px-4 py-1.5 font-mono text-cf-navy text-[11px]">{d.domain}</td>
                       <td className="px-4 py-1.5 text-right font-mono font-bold text-green-600 text-[11px]">{formatNumber(d.count)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        {topBlockedUsers.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-cf-gray-100">
+              <h3 className="text-sm font-semibold text-cf-navy">Users With the Most Blocked HTTP Requests</h3>
+            </div>
+            <div className="overflow-y-auto" style={{ maxHeight: 240 }}>
+              <table className="w-full text-xs">
+                <thead className="sticky top-0">
+                  <tr className="bg-cf-gray-50 text-cf-gray-500 uppercase tracking-wide text-[10px]">
+                    <th className="px-4 py-2 text-left font-semibold">#</th>
+                    <th className="px-4 py-2 text-left font-semibold">User</th>
+                    <th className="px-4 py-2 text-right font-semibold">Blocked</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-cf-gray-100">
+                  {topBlockedUsers.map((u, i) => (
+                    <tr key={u.email} className={i%2===0?"bg-white":"bg-cf-gray-50/40"}>
+                      <td className="px-4 py-1.5 text-cf-gray-400 font-mono text-[11px]">{i+1}</td>
+                      <td className="px-4 py-1.5 font-mono text-cf-navy text-[11px] truncate max-w-[220px]">{u.email}</td>
+                      <td className="px-4 py-1.5 text-right font-mono font-bold text-red-600 text-[11px]">{formatNumber(u.count)}</td>
                     </tr>
                   ))}
                 </tbody>

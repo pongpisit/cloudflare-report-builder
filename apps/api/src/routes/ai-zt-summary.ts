@@ -48,11 +48,13 @@ ${isPoc
   : `- This report covers ${periodLabel} (${days} days: ${meta.since} to ${meta.until}). Always write "${periodLabel}". Never use the words "POC" or "Proof-of-Concept".`}
 
 PARAGRAPH PURPOSES (write in this order, no labels):
-1. IDENTITY & ACCESS: Open "Over the ${periodLabel} evaluation period, ${meta.accountName}..." — cover total auth events, success rate, unique users/apps protected, licensed seats vs active-in-period, MFA coverage, most active IdPs. State what Access prevented.
-2. GATEWAY FILTERING & GENAI: DNS queries volume + blocked %, HTTP filtering, top blocked categories, L4 network policies and bandwidth, generative AI (Shadow AI) tool usage and whether it's governed. Quantify threats stopped and data volumes moved.
-3. DEVICE POSTURE & CONNECTIVITY: WARP enrolled devices and real online/offline connection status, OS breakdown, tunnel health. Explain value of device-aware access vs legacy VPN.
-4. RISKS & GAPS: Pick top 2-3 risks from RISK SIGNALS. Be direct about the security consequence of each gap. Use actual numbers/facts.
-${paragraph5}`;
+1. IDENTITY & ACCESS: Open "Over the ${periodLabel} evaluation period, ${meta.accountName}..." — cover total auth events, success rate, unique users/apps protected, licensed seats vs active-in-period, MFA policy coverage (from Access policies, not a challenge count — see note below), most active IdPs. State what Access prevented. If PERIOD-OVER-PERIOD CHANGE data is present, mention 1-2 notable directional changes vs the previous report.
+2. GATEWAY FILTERING & GENAI: DNS queries volume + blocked %, HTTP filtering (including which users had the most blocked requests, if listed), top blocked categories, L4 network policies and bandwidth, generative AI (Shadow AI) tool usage and whether it's governed. Quantify threats stopped and data volumes moved.
+3. DEVICE POSTURE & CONNECTIVITY: WARP enrolled devices and real online/offline connection status, OS breakdown, tunnel health, and live device-experience (DEX) health if present. Explain value of device-aware access vs legacy VPN.
+4. RISKS & GAPS: Pick top 2-3 risks from RISK SIGNALS. Be direct about the security consequence of each gap. If CONFIGURATION CHANGES occurred this period, mention the most security-relevant one by actor/action. Use actual numbers/facts.
+${paragraph5}
+
+CRITICAL ACCURACY RULE: Never state or imply an MFA "challenge count" or "MFA usage volume" — no such measurement exists in the data. You may only describe MFA COVERAGE as "X of Y Access policies require MFA" using the exact policy-level count provided.`;
 
   const lines: string[] = [];
   lines.push(`ACCOUNT: ${meta.accountName} (${meta.accountId})`);
@@ -61,8 +63,12 @@ ${paragraph5}`;
   lines.push(`=== IDENTITY & ACCESS ===`);
   lines.push(`Total auth events: ${fmt(summary.totalAuthEvents)}`);
   lines.push(`Auth success rate: ${summary.authSuccessRate}%`);
-  lines.push(`Blocked auth: ${fmt(summary.blockedAuthEvents)}, MFA challenges: ${fmt(summary.mfaChallenges)}`);
+  lines.push(`Blocked auth: ${fmt(summary.blockedAuthEvents)}`);
+  lines.push(`NOTE: MFA-challenge event counts are not exposed by any Cloudflare API — do not mention an MFA challenge count. Only cite MFA POLICY coverage (below).`);
   lines.push(`Unique users: ${fmt(summary.uniqueUsers)}, Unique apps protected: ${fmt(summary.uniqueApps)}`);
+  if (zt.accessDistinctCounts) {
+    lines.push(`Exact distinct counts (higher-limit sample of ${fmt(zt.accessDistinctCounts.sampleLimit)} rows): ${zt.accessDistinctCounts.uniqueUsers} users, ${zt.accessDistinctCounts.uniqueApps} apps`);
+  }
   lines.push(`Licensed seats: ${summary.seatsTotal} (${summary.seatsAccessTotal} Access, ${summary.seatsGatewayTotal} Gateway), active in period: ${summary.seatsActiveInPeriod}, never logged in: ${summary.seatsNeverLoggedIn}`);
   lines.push(`Access apps: ${accessApps.length} (${accessApps.filter((a) => a.enabled).length} enabled)`);
   lines.push(`IdPs connected: ${accessIdps.map((i) => i.name).join(", ") || "None"}`);
@@ -94,11 +100,46 @@ ${paragraph5}`;
   lines.push(`=== TUNNELS ===`);
   lines.push(`Tunnels: ${summary.tunnelsTotal} total, ${summary.tunnelsHealthy} healthy`);
   lines.push(`Routes: ${zt.tunnelRoutes.length}`);
+  if (zt.gatewayHttpTopBlockedUsers && zt.gatewayHttpTopBlockedUsers.length > 0) {
+    lines.push(`Users with most blocked HTTP requests: ${zt.gatewayHttpTopBlockedUsers.slice(0,3).map((u) => `${u.email} (${fmt(u.count)})`).join(", ")}`);
+  }
+  lines.push(``);
+  lines.push(`=== DEVICE EXPERIENCE (DEX) — live snapshot, not period-scoped ===`);
+  if (zt.dexFleetStatus && zt.dexFleetStatus.uniqueDevicesTotal > 0) {
+    const connected = zt.dexFleetStatus.byStatus.filter((s) => s.value.toLowerCase().includes("connect") && !s.value.toLowerCase().includes("dis")).reduce((sum, s) => sum + s.count, 0);
+    lines.push(`Devices seen in the last 60 minutes: ${zt.dexFleetStatus.uniqueDevicesTotal}, currently connected: ${connected}`);
+    lines.push(`Client versions in fleet: ${zt.dexFleetStatus.byVersion.length} distinct versions`);
+  } else {
+    lines.push(`No live DEX telemetry available for this account.`);
+  }
   lines.push(``);
   lines.push(`=== DLP & DATA SECURITY ===`);
   lines.push(`DLP profiles: ${zt.dlpProfiles.length}`);
   lines.push(`CASB findings: ${fmt(summary.casbFindingsCount)}`);
+  if (zt.casbFindingsDetail && zt.casbFindingsDetail.length > 0) {
+    const critHigh = zt.casbFindingsDetail.filter((f) => ["critical","high"].includes(f.severity.toLowerCase())).length;
+    if (critHigh > 0) lines.push(`Of those, ${critHigh} are critical/high severity`);
+  }
+  const quarantineTotal = (zt.gatewayDlpQuarantineTimeSeries ?? []).reduce((s, d) => s + d.count, 0);
+  if (quarantineTotal > 0) lines.push(`HTTP requests quarantined by DLP action this period: ${fmt(quarantineTotal)}`);
   lines.push(``);
+  if (zt.configChanges && zt.configChanges.length > 0) {
+    lines.push(`=== CONFIGURATION CHANGES THIS PERIOD ===`);
+    lines.push(`${zt.configChanges.length} Zero-Trust-relevant configuration change(s) recorded.`);
+    for (const c of zt.configChanges.slice(0, 5)) {
+      lines.push(`- ${c.actionType} on ${c.product} by ${c.actorEmail}: ${c.description || "(no description)"}`);
+    }
+    lines.push(``);
+  }
+  if (zt.baseline && zt.baseline.previousGeneratedAt && Object.keys(zt.baseline.deltas).length > 0) {
+    lines.push(`=== PERIOD-OVER-PERIOD CHANGE (vs report generated ${zt.baseline.previousGeneratedAt}) ===`);
+    for (const [field, d] of Object.entries(zt.baseline.deltas)) {
+      if (d.changePct !== null && Math.abs(d.changePct) >= 5) {
+        lines.push(`${field}: ${d.previous} → ${d.current} (${d.changePct > 0 ? "+" : ""}${d.changePct}%)`);
+      }
+    }
+    lines.push(``);
+  }
   if (zt.aiAppUsage && zt.aiAppUsage.uniqueApps > 0) {
     lines.push(`=== GENERATIVE AI (SHADOW AI) USAGE ===`);
     lines.push(`GenAI apps discovered: ${zt.aiAppUsage.uniqueApps} (e.g. ${zt.aiAppUsage.apps.slice(0,3).map((a) => a.name).join(", ")})`);
