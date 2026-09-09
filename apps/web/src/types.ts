@@ -635,6 +635,9 @@ export interface ZeroTrustData {
   // ── Remediation Register (real; D1-backed lifecycle tracking) ────────────
   remediationRegister?: RemediationItem[];
 
+  // ── CASB Finding Register (real; D1-backed lifecycle tracking) ───────────
+  casbFindingRegister?: CasbFindingItem[];
+
   errors: Record<string, string>;
 }
 
@@ -655,6 +658,26 @@ export interface RemediationItem {
   firstSeenAt: string;
   lastSeenAt: string;
   resolvedAt: string | null;
+  occurrences: number;
+  ageDays: number;
+}
+
+export type CasbFindingStatus = "open" | "investigating" | "remediated" | "false_positive" | "accepted_risk";
+
+export interface CasbFindingItem {
+  id: string;
+  accountId: string;
+  findingId: string;
+  severity: string;
+  type: string;
+  resourceName: string;
+  integrationId: string | null;
+  status: CasbFindingStatus;
+  ownerEmail: string | null;
+  dueDate: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  clearedAt: string | null;
   occurrences: number;
   ageDays: number;
 }

@@ -36,6 +36,7 @@ import {
 import { handleScheduleZones } from "./routes/schedule-options";
 import { handleGetSettings, handleUpdateSettings, handleTestSettings } from "./routes/settings";
 import { handleGetRemediation, handlePatchRemediation } from "./routes/remediation";
+import { handleGetCasbFindings, handlePatchCasbFinding } from "./routes/casb-findings";
 import { scheduled } from "./scheduler";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -169,6 +170,10 @@ app.post("/api/zt-summary", (c, next) => applyRateLimit(c, next), handleZTSummar
 // Remediation register — lifecycle tracking of Zero Trust findings (D1)
 app.get  ("/api/remediation",     handleGetRemediation);
 app.patch("/api/remediation/:id", handlePatchRemediation);
+
+// CASB / Data Security Posture finding register — lifecycle tracking (D1)
+app.get  ("/api/casb-findings",     handleGetCasbFindings);
+app.patch("/api/casb-findings/:id", handlePatchCasbFinding);
 
 // ─── Scheduled report emails — configuration dashboard (D1) ──────────────────
 app.get ("/api/schedule/zones",       handleScheduleZones);          // zone picker (backend token)

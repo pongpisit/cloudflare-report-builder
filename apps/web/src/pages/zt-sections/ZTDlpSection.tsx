@@ -1,20 +1,94 @@
-import { AlertTriangle, Shield, Info } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Shield, Info, Clock } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
-import type { ZeroTrustData } from "../../types";
+import type { ZeroTrustData, CasbFindingItem, CasbFindingStatus } from "../../types";
 import { formatNumber } from "../../utils/formatters";
 import SectionHeader from "../../components/SectionHeader";
+import { updateCasbFindingItem } from "../../services/api";
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#EF4444", high: "#F97316", medium: "#F59E0B", low: "#3B82F6", unknown: "#9CA3AF",
 };
 
+const CASB_STATUS_LABEL: Record<CasbFindingStatus, string> = {
+  open: "Open", investigating: "Investigating", remediated: "Remediated",
+  false_positive: "False Positive", accepted_risk: "Accepted Risk",
+};
+const CASB_STATUS_COLOR: Record<CasbFindingStatus, string> = {
+  open: "#EF4444", investigating: "#3B82F6", remediated: "#10B981",
+  false_positive: "#9CA3AF", accepted_risk: "#8B5CF6",
+};
+
+function CasbFindingRow({ item, onChange }: { item: CasbFindingItem; onChange: (next: CasbFindingItem) => void }) {
+  const [ownerDraft, setOwnerDraft] = useState(item.ownerEmail ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function persist(update: Parameters<typeof updateCasbFindingItem>[1]) {
+    setSaving(true);
+    try {
+      const updated = await updateCasbFindingItem(item.id, update);
+      onChange(updated);
+    } catch { /* surfaced implicitly via unchanged UI state */ }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <tr className="border-b border-cf-gray-50 last:border-0 align-top">
+      <td className="py-1.5 pr-3">
+        <span className="text-[10px] px-2 py-0.5 rounded-full font-medium capitalize"
+          style={{ color: SEVERITY_COLORS[item.severity.toLowerCase()] ?? SEVERITY_COLORS.unknown, backgroundColor: `${SEVERITY_COLORS[item.severity.toLowerCase()] ?? SEVERITY_COLORS.unknown}14` }}>
+          {item.severity}
+        </span>
+      </td>
+      <td className="py-1.5 pr-3 text-cf-navy">{item.type}</td>
+      <td className="py-1.5 pr-3 text-cf-gray-500 font-mono truncate max-w-[180px]">{item.resourceName}</td>
+      <td className="py-1.5 pr-3 text-[11px] text-cf-gray-500 whitespace-nowrap">
+        <div className="flex items-center gap-1"><Clock size={10} className="text-cf-gray-400"/>{item.ageDays}d</div>
+      </td>
+      <td className="py-1.5 pr-3">
+        <select
+          className="print:hidden text-[11px] border border-cf-gray-200 rounded px-1 py-0.5 bg-white"
+          value={item.status}
+          disabled={saving}
+          onChange={(e) => persist({ status: e.target.value as CasbFindingStatus })}
+        >
+          {(Object.keys(CASB_STATUS_LABEL) as CasbFindingStatus[]).map((s) => (
+            <option key={s} value={s}>{CASB_STATUS_LABEL[s]}</option>
+          ))}
+        </select>
+        <span className="hidden print:inline text-[11px] font-semibold" style={{ color: CASB_STATUS_COLOR[item.status] }}>
+          {CASB_STATUS_LABEL[item.status]}
+        </span>
+      </td>
+      <td className="py-1.5">
+        <input
+          type="email"
+          placeholder="owner@company.com"
+          className="print:hidden text-[11px] border border-cf-gray-200 rounded px-1 py-0.5 w-[140px]"
+          value={ownerDraft}
+          disabled={saving}
+          onChange={(e) => setOwnerDraft(e.target.value)}
+          onBlur={() => { if (ownerDraft !== (item.ownerEmail ?? "")) persist({ ownerEmail: ownerDraft || null }); }}
+        />
+        <span className="hidden print:inline text-[11px] text-cf-gray-600">{item.ownerEmail || "Unassigned"}</span>
+      </td>
+    </tr>
+  );
+}
+
 export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
   const profiles = data.dlpProfiles;
   const casbBySeverity = data.casbFindingsBySeverity ?? [];
-  const casbDetail = data.casbFindingsDetail ?? [];
   const quarantineSeries = data.gatewayDlpQuarantineTimeSeries ?? [];
   const s = data.summary;
   const dlpNote = data.dataConfidence?.dlpProfiles;
+  const [register, setRegister] = useState<CasbFindingItem[]>(data.casbFindingRegister ?? []);
+
+  function handleChange(next: CasbFindingItem) {
+    setRegister((prev) => prev.map((it) => (it.id === next.id ? next : it)));
+  }
+  const activeFindings  = register.filter((f) => f.clearedAt === null);
+  const clearedFindings = register.filter((f) => f.clearedAt !== null);
 
   if (profiles.length === 0 && (s.casbFindingsCount ?? 0) === 0) return (
     <section className="report-section">
@@ -99,37 +173,55 @@ export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
         </div>
       )}
 
-      {/* CASB finding detail — the REST API already returns type/resource/
-          integration per finding; previously only tallied into severity
-          counts and discarded. */}
-      {casbDetail.length > 0 && (
+      {/* CASB Finding Register — lifecycle-tracked (age, status, owner)
+          version of the REST /data-security/posture/findings feed. Each
+          finding is tracked by Cloudflare's own finding id across report
+          runs; auto-clears (status → Remediated) when Cloudflare stops
+          reporting it, unless already marked False Positive / Accepted
+          Risk — mirrors the SaaS Risk Assessment tracking pattern used in
+          Zscaler/Prisma/Netskope reporting. */}
+      {activeFindings.length > 0 && (
         <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4 mt-5">
-          <h3 className="text-sm font-semibold text-cf-navy mb-3">CASB Findings ({casbDetail.length}{casbDetail.length === 50 ? "+" : ""})</h3>
+          <h3 className="text-sm font-semibold text-cf-navy mb-1">CASB Finding Register ({activeFindings.length})</h3>
+          <p className="text-[10px] text-cf-gray-400 mb-3">
+            Tracked across report runs — age since first detected, investigation status, and assignable owner. Auto-clears when Cloudflare no longer reports the finding.
+          </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-[10px] uppercase tracking-wide text-cf-gray-400 border-b border-cf-gray-100">
                   <th className="py-1.5 pr-3">Severity</th>
                   <th className="py-1.5 pr-3">Type</th>
-                  <th className="py-1.5">Resource</th>
+                  <th className="py-1.5 pr-3">Resource</th>
+                  <th className="py-1.5 pr-3">Age</th>
+                  <th className="py-1.5 pr-3">Status</th>
+                  <th className="py-1.5">Owner</th>
                 </tr>
               </thead>
               <tbody>
-                {casbDetail.slice(0, 25).map((f, i) => (
-                  <tr key={f.id ?? i} className="border-b border-cf-gray-50 last:border-0">
-                    <td className="py-1.5 pr-3">
-                      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium capitalize"
-                        style={{ color: SEVERITY_COLORS[f.severity.toLowerCase()] ?? SEVERITY_COLORS.unknown, backgroundColor: `${SEVERITY_COLORS[f.severity.toLowerCase()] ?? SEVERITY_COLORS.unknown}14` }}>
-                        {f.severity}
-                      </span>
-                    </td>
-                    <td className="py-1.5 pr-3 text-cf-navy">{f.type}</td>
-                    <td className="py-1.5 text-cf-gray-500 font-mono truncate max-w-xs">{f.resourceName}</td>
-                  </tr>
+                {activeFindings.slice(0, 30).map((f) => (
+                  <CasbFindingRow key={f.id} item={f} onChange={handleChange} />
                 ))}
               </tbody>
             </table>
           </div>
+          {clearedFindings.length > 0 && (
+            <details className="mt-3">
+              <summary className="text-[11px] text-cf-gray-500 cursor-pointer">Cleared findings ({clearedFindings.length})</summary>
+              <table className="w-full text-xs mt-2">
+                <tbody>
+                  {clearedFindings.slice(0, 20).map((f) => (
+                    <tr key={f.id} className="border-b border-cf-gray-50 last:border-0">
+                      <td className="py-1 pr-3 text-cf-gray-500">{f.type} — {f.resourceName}</td>
+                      <td className="py-1 text-cf-gray-400 text-[10px] whitespace-nowrap">
+                        {CASB_STATUS_LABEL[f.status]} {f.clearedAt ? new Date(f.clearedAt).toLocaleDateString() : ""}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
         </div>
       )}
 

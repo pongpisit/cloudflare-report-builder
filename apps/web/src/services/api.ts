@@ -3,6 +3,7 @@ import type {
   ScheduleConfig, ScheduleInput, ScheduleHistoryEntry,
   BackendSettingsState, BackendSettingsUpdate,
   RemediationItem, RemediationStatus,
+  CasbFindingItem, CasbFindingStatus,
 } from "../types";
 
 // In production, the Pages Function at /functions/api/[[path]].ts proxies
@@ -234,6 +235,28 @@ export async function updateRemediationItem(
 ): Promise<RemediationItem> {
   const result = await request<{ ok: boolean; item: RemediationItem }>(
     `/api/remediation/${id}`,
+    "PATCH",
+    update
+  );
+  return result.item;
+}
+
+// ─── CASB Finding Register ─────────────────────────────────────────────────────
+
+export async function fetchCasbFindingRegister(accountId: string): Promise<CasbFindingItem[]> {
+  const result = await request<{ ok: boolean; items: CasbFindingItem[] }>(
+    `/api/casb-findings?accountId=${encodeURIComponent(accountId)}`,
+    "GET"
+  );
+  return result.items;
+}
+
+export async function updateCasbFindingItem(
+  id: string,
+  update: { status?: CasbFindingStatus; ownerEmail?: string | null; dueDate?: string | null }
+): Promise<CasbFindingItem> {
+  const result = await request<{ ok: boolean; item: CasbFindingItem }>(
+    `/api/casb-findings/${id}`,
     "PATCH",
     update
   );

@@ -462,6 +462,13 @@ export interface ZeroTrustData {
   // runs instead of being a fresh, unauditable list every time) ─────────────
   remediationRegister?: RemediationItem[];
 
+  // ── CASB Finding Register (real; D1-backed lifecycle tracking of
+  // individual REST /data-security/posture/findings entries, keyed by
+  // Cloudflare's own finding id — same pattern as remediationRegister but
+  // for per-finding SaaS exposure/DLP posture items instead of fixed
+  // boolean conditions) ──────────────────────────────────────────────────
+  casbFindingRegister?: CasbFindingItem[];
+
   errors: Record<string, string>;
 }
 
@@ -484,6 +491,26 @@ export interface RemediationItem {
   resolvedAt: string | null;
   occurrences: number;
   ageDays: number;   // computed at read-time from firstSeenAt to now (or resolvedAt if resolved)
+}
+
+export type CasbFindingStatus = "open" | "investigating" | "remediated" | "false_positive" | "accepted_risk";
+
+export interface CasbFindingItem {
+  id: string;
+  accountId: string;
+  findingId: string;
+  severity: string;
+  type: string;
+  resourceName: string;
+  integrationId: string | null;
+  status: CasbFindingStatus;
+  ownerEmail: string | null;
+  dueDate: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  clearedAt: string | null;   // set when Cloudflare stops reporting this finding (auto-detected)
+  occurrences: number;
+  ageDays: number;
 }
 
 // ─── Time Helpers ─────────────────────────────────────────────────────────────

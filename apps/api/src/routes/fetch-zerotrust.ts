@@ -40,6 +40,7 @@ import {
 import { last30Days as l30 } from "../services/cf-graphql";
 import { getBaseline, saveSnapshot } from "../services/zt-snapshots";
 import { syncRemediationFindings, getRemediationRegister, type RemediationFinding } from "../services/zt-remediation";
+import { syncCasbFindings, getCasbFindingRegister, type CasbFindingInput } from "../services/zt-casb-tracking";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
@@ -822,6 +823,16 @@ export async function generateZerotrustData(input: {
   // owner, status) rather than only this run's raw findings.
   await syncRemediationFindings(db, accountId, zerotrust.meta.generatedAt, remediationFindings);
   zerotrust.remediationRegister = await getRemediationRegister(db, accountId);
+
+  // ── CASB finding register ──────────────────────────────────────────────
+  // Same lifecycle-tracking pattern, applied to individual REST Data
+  // Security Posture findings (keyed by Cloudflare's own finding id) rather
+  // than a fixed set of boolean conditions.
+  const casbFindingInputs: CasbFindingInput[] = casbFindingsDetail.map((f) => ({
+    id: f.id, severity: f.severity, type: f.type, resourceName: f.resourceName, integrationId: f.integrationId,
+  }));
+  await syncCasbFindings(db, accountId, zerotrust.meta.generatedAt, casbFindingInputs);
+  zerotrust.casbFindingRegister = await getCasbFindingRegister(db, accountId);
 
   return zerotrust;
 }
