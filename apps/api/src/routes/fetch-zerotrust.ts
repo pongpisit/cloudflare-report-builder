@@ -39,6 +39,7 @@ import {
 
 import { last30Days as l30 } from "../services/cf-graphql";
 import { getBaseline, saveSnapshot } from "../services/zt-snapshots";
+import { syncRemediationFindings, getRemediationRegister, type RemediationFinding } from "../services/zt-remediation";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
@@ -509,6 +510,46 @@ export async function generateZerotrustData(input: {
       : policyQueryMap.has(r.name) ? `${policyQueryMap.get(r.name)!.toLocaleString()} queries in period` : "",
   }));
 
+  // ── Control Coverage & Effectiveness ────────────────────────────────────────
+  // Denominator-based coverage instead of only raw event counts — mirrors
+  // the Zscaler/Prisma/Netskope "coverage vs total" reporting pattern.
+  // "Unused" DNS policies are real (policyQueryMap, matched by rule name —
+  // see the annotation fix above); HTTP/L4 have no confirmed per-policy
+  // dimension so they are NOT given a fabricated unused-policy list.
+  const dnsPoliciesAll  = gtwPolicies.filter((p) => p.ruleType === "dns");
+  const httpPoliciesAll = gtwPolicies.filter((p) => p.ruleType === "http");
+  const l4PoliciesAll   = gtwPolicies.filter((p) => p.ruleType === "l4");
+  const appsWithPolicies = accessApps.filter((a) => a.policyCount > 0).length;
+  const appIdsWithMfa = new Set(accessPolicies.filter((p) => p.requireMfa).map((p) => p.appId));
+  const mfaAppsForCoverage = accessApps.filter((a) => appIdsWithMfa.has(a.id)).length;
+  const controlCoverage: ZeroTrustData["controlCoverage"] = {
+    access: {
+      totalApps: accessApps.length,
+      enabledApps: accessApps.filter((a) => a.enabled).length,
+      appsWithPolicies,
+      appsWithoutPolicies: accessApps.length - appsWithPolicies,
+      appsWithMfa: mfaAppsForCoverage,
+      appsWithoutMfa: accessApps.length - mfaAppsForCoverage,
+      mfaCoveragePct: accessApps.length > 0 ? Math.round((mfaAppsForCoverage / accessApps.length) * 100) : 0,
+    },
+    gatewayDns: {
+      totalPolicies: dnsPoliciesAll.length,
+      enabledPolicies: dnsPoliciesAll.filter((p) => p.enabled).length,
+      blockPolicies: dnsPoliciesAll.filter((p) => p.action === "block").length,
+      unusedPolicies: dnsPoliciesAll
+        .filter((p) => p.enabled && (policyQueryMap.get(p.name) ?? 0) === 0)
+        .map((p) => ({ name: p.name })),
+    },
+    gatewayHttp: { totalPolicies: httpPoliciesAll.length, enabledPolicies: httpPoliciesAll.filter((p) => p.enabled).length },
+    gatewayL4:   { totalPolicies: l4PoliciesAll.length,   enabledPolicies: l4PoliciesAll.filter((p) => p.enabled).length },
+    seats: {
+      total: seatsTotal,
+      activeInPeriod: seatsActiveInPeriod,
+      neverLoggedIn: seatsNeverLoggedIn,
+      activePct: seatsTotal > 0 ? Math.round((seatsActiveInPeriod / seatsTotal) * 100) : 0,
+    },
+  };
+
   // ── Generative AI / Shadow AI usage ────────────────────────────────────────
   // Real Cloudflare category classification (DNS + HTTP Gateway traffic
   // tagged with category id 184 "Artificial Intelligence", confirmed live
@@ -544,26 +585,95 @@ export async function generateZerotrustData(input: {
     hasGovernancePolicy: hasAiGovernancePolicy,
   };
 
-  // ── Recommendations ───────────────────────────────────────────────────────
-  const recommendations: ZeroTrustData["recommendations"] = [];
-  if (accessPolicies.filter((p) => p.requireMfa).length === 0)
-    recommendations.push({ priority: "high", title: "Enforce MFA on All Access Applications", description: "No Access policies require MFA. Add a 'Require' rule with your IdP's MFA method to all applications.", benefit: "Prevents credential stuffing and account takeover — MFA blocks 99.9% of automated attacks" });
-  if (gtwPolicies.filter((p) => p.ruleType === "dns" && p.action === "block").length < 3)
-    recommendations.push({ priority: "high", title: "Add Gateway DNS Blocking Policies for Malware & Phishing", description: "Less than 3 DNS blocking policies configured. Add policies blocking 'Malware', 'Phishing', and 'Command and Control' categories.", benefit: "DNS filtering stops threats before connections are established — zero latency impact" });
-  if (warpCount === 0)
-    recommendations.push({ priority: "medium", title: "Deploy WARP Client for Device-Level Security", description: "No WARP-enrolled devices detected. Deploy the WARP client to route all device traffic through Cloudflare Gateway for full visibility.", benefit: "Enables device posture checks, split tunneling, and egress filtering for all managed devices" });
-  if (gtwPolicies.filter((p) => p.ruleType === "http").length === 0)
-    recommendations.push({ priority: "medium", title: "Enable HTTP Gateway Filtering", description: "No HTTP filtering policies configured. Add policies to inspect and block malicious web content, shadow IT, and data exfiltration.", benefit: "HTTP inspection provides full visibility into SaaS usage and can detect data loss attempts" });
-  if ((rawDlpProfs as Array<unknown>).length === 0)
-    recommendations.push({ priority: "medium", title: "Configure DLP Profiles to Prevent Data Loss", description: "No DLP profiles configured. Add predefined profiles for PII, credit cards, and custom sensitive data patterns.", benefit: "Prevents accidental or malicious exfiltration of sensitive customer and company data" });
-  if (tunnelList.length === 0)
-    recommendations.push({ priority: "low", title: "Replace VPN with Cloudflare Tunnel", description: "No Cloudflare Tunnels configured. Replace your VPN with Tunnel + Access for zero-trust network access to internal applications.", benefit: "Eliminates VPN attack surface — no inbound firewall rules needed, connections are outbound-only" });
-  if (aiAppUsage.uniqueApps > 0 && !aiAppUsage.hasGovernancePolicy)
-    recommendations.push({ priority: "medium", title: `Govern Generative AI (Shadow AI) Usage — ${aiAppUsage.uniqueApps} App${aiAppUsage.uniqueApps === 1 ? "" : "s"} Discovered`, description: `Users are accessing generative AI tools (e.g. ${genAiObj.apps.slice(0,3).map((a) => a.name).join(", ") || "ChatGPT, Claude"}) with no Gateway policy specifically governing GenAI traffic. Add DNS/HTTP categories or app-based policies for "Generative AI" plus a DLP profile to inspect prompts for sensitive data.`, benefit: "Prevents accidental leakage of confidential data into public AI models and gives visibility/audit trail into GenAI adoption across the organization" });
-  if (warpLatestStatus.total > 0 && warpLatestStatus.offline > warpLatestStatus.online)
-    recommendations.push({ priority: "medium", title: `${warpLatestStatus.offline} of ${warpLatestStatus.total} WARP Devices Not Connected`, description: `More than half of enrolled WARP devices had a non-connected status (disconnected, no network, or a connectivity check failure) most recently in this period. Investigate client health, captive-portal issues, or expired device certificates.`, benefit: "Devices that are not connected to WARP are not protected by Gateway policies or posture checks" });
-  if (seatsTotal > 0 && seatsNeverLoggedIn / seatsTotal > 0.3)
-    recommendations.push({ priority: "low", title: `${seatsNeverLoggedIn} Provisioned Users Have Never Logged In`, description: `${seatsNeverLoggedIn} of ${seatsTotal} provisioned Access/Gateway seats have no recorded successful login. Review whether these are stale accounts consuming licensed seats.`, benefit: "Reduces licensing cost and shrinks the attack surface from unused/orphaned accounts" });
+  // ── Recommendations / Remediation Findings ────────────────────────────────
+  // Single source of truth: each entry drives BOTH the point-in-time
+  // `recommendations` list (unchanged shape, used by the AI summary and the
+  // Recommendations/Opportunity sections) AND the persisted, D1-backed
+  // remediation register (`remediationFindings` — see zt-remediation.ts),
+  // which is what turns a recommendation into a tracked-over-time finding
+  // with age, owner, and status instead of a fresh, un-auditable bullet
+  // point on every single report run.
+  const mfaAppsCount = accessPolicies.filter((p) => p.requireMfa).length;
+  const dnsBlockPolicyCount = gtwPolicies.filter((p) => p.ruleType === "dns" && p.action === "block").length;
+  const httpPolicyCount = gtwPolicies.filter((p) => p.ruleType === "http").length;
+  const dlpProfileCount = (rawDlpProfs as Array<unknown>).length;
+
+  const findingDefs: Array<{
+    key: string; active: boolean; priority: "high" | "medium" | "low";
+    title: string; description: string; benefit: string; evidence: string;
+  }> = [
+    {
+      key: "mfa-coverage", active: mfaAppsCount === 0, priority: "high",
+      title: "Enforce MFA on All Access Applications",
+      description: "No Access policies require MFA. Add a 'Require' rule with your IdP's MFA method to all applications.",
+      benefit: "Prevents credential stuffing and account takeover — MFA blocks 99.9% of automated attacks",
+      evidence: `0 of ${accessPolicies.length} Access policies require MFA`,
+    },
+    {
+      key: "dns-blocking-policies", active: dnsBlockPolicyCount < 3, priority: "high",
+      title: "Add Gateway DNS Blocking Policies for Malware & Phishing",
+      description: "Less than 3 DNS blocking policies configured. Add policies blocking 'Malware', 'Phishing', and 'Command and Control' categories.",
+      benefit: "DNS filtering stops threats before connections are established — zero latency impact",
+      evidence: `${dnsBlockPolicyCount} DNS blocking polic${dnsBlockPolicyCount === 1 ? "y" : "ies"} configured (recommended: 3+)`,
+    },
+    {
+      key: "warp-deployment", active: warpCount === 0, priority: "medium",
+      title: "Deploy WARP Client for Device-Level Security",
+      description: "No WARP-enrolled devices detected. Deploy the WARP client to route all device traffic through Cloudflare Gateway for full visibility.",
+      benefit: "Enables device posture checks, split tunneling, and egress filtering for all managed devices",
+      evidence: "0 WARP-enrolled devices",
+    },
+    {
+      key: "http-gateway-filtering", active: httpPolicyCount === 0, priority: "medium",
+      title: "Enable HTTP Gateway Filtering",
+      description: "No HTTP filtering policies configured. Add policies to inspect and block malicious web content, shadow IT, and data exfiltration.",
+      benefit: "HTTP inspection provides full visibility into SaaS usage and can detect data loss attempts",
+      evidence: "0 HTTP Gateway policies configured",
+    },
+    {
+      key: "dlp-profiles", active: dlpProfileCount === 0, priority: "medium",
+      title: "Configure DLP Profiles to Prevent Data Loss",
+      description: "No DLP profiles configured. Add predefined profiles for PII, credit cards, and custom sensitive data patterns.",
+      benefit: "Prevents accidental or malicious exfiltration of sensitive customer and company data",
+      evidence: "0 DLP profiles configured",
+    },
+    {
+      key: "cloudflare-tunnel", active: tunnelList.length === 0, priority: "low",
+      title: "Replace VPN with Cloudflare Tunnel",
+      description: "No Cloudflare Tunnels configured. Replace your VPN with Tunnel + Access for zero-trust network access to internal applications.",
+      benefit: "Eliminates VPN attack surface — no inbound firewall rules needed, connections are outbound-only",
+      evidence: "0 Cloudflare Tunnels configured",
+    },
+    {
+      key: "genai-governance", active: aiAppUsage.uniqueApps > 0 && !aiAppUsage.hasGovernancePolicy, priority: "medium",
+      title: `Govern Generative AI (Shadow AI) Usage — ${aiAppUsage.uniqueApps} App${aiAppUsage.uniqueApps === 1 ? "" : "s"} Discovered`,
+      description: `Users are accessing generative AI tools (e.g. ${genAiObj.apps.slice(0,3).map((a) => a.name).join(", ") || "ChatGPT, Claude"}) with no Gateway policy specifically governing GenAI traffic. Add DNS/HTTP categories or app-based policies for "Generative AI" plus a DLP profile to inspect prompts for sensitive data.`,
+      benefit: "Prevents accidental leakage of confidential data into public AI models and gives visibility/audit trail into GenAI adoption across the organization",
+      evidence: `${aiAppUsage.uniqueApps} GenAI app(s), ${aiAppUsage.uniqueUsers} user(s), no governing Gateway policy`,
+    },
+    {
+      key: "warp-offline-devices", active: warpLatestStatus.total > 0 && warpLatestStatus.offline > warpLatestStatus.online, priority: "medium",
+      title: `${warpLatestStatus.offline} of ${warpLatestStatus.total} WARP Devices Not Connected`,
+      description: "More than half of enrolled WARP devices had a non-connected status (disconnected, no network, or a connectivity check failure) most recently in this period. Investigate client health, captive-portal issues, or expired device certificates.",
+      benefit: "Devices that are not connected to WARP are not protected by Gateway policies or posture checks",
+      evidence: `${warpLatestStatus.offline} of ${warpLatestStatus.total} WARP devices not connected`,
+    },
+    {
+      key: "stale-seats", active: seatsTotal > 0 && seatsNeverLoggedIn / seatsTotal > 0.3, priority: "low",
+      title: `${seatsNeverLoggedIn} Provisioned Users Have Never Logged In`,
+      description: `${seatsNeverLoggedIn} of ${seatsTotal} provisioned Access/Gateway seats have no recorded successful login. Review whether these are stale accounts consuming licensed seats.`,
+      benefit: "Reduces licensing cost and shrinks the attack surface from unused/orphaned accounts",
+      evidence: `${seatsNeverLoggedIn} of ${seatsTotal} seats never logged in`,
+    },
+  ];
+
+  const recommendations: ZeroTrustData["recommendations"] = findingDefs
+    .filter((f) => f.active)
+    .map((f) => ({ priority: f.priority, title: f.title, description: f.description, benefit: f.benefit }));
+
+  const remediationFindings: RemediationFinding[] = findingDefs
+    .filter((f) => f.active)
+    .map((f) => ({ key: f.key, severity: f.priority, title: f.title, description: f.description, benefit: f.benefit, evidence: f.evidence }));
 
   // ── Assemble response ─────────────────────────────────────────────────────
   const zerotrust: ZeroTrustData = {
@@ -693,7 +803,9 @@ export async function generateZerotrustData(input: {
       dlpProfiles: "Lists configured DLP profiles only (no per-period match counts are exposed by GraphQL). See gatewayDlpQuarantineTimeSeries for a real, if indirect, HTTP-quarantine-action trend.",
       dexFleetStatus: "Live device telemetry from the last 60 minutes — NOT scoped to the report period (since/until). Use it as a right-now device-health snapshot alongside the historical WARP connection-status trend.",
       gatewayHttpTopBlockedUsers: "HTTP Gateway only — no equivalent per-user attribution is confirmed available on the DNS or Network (L4) Gateway datasets.",
+      controlCoverage: "Unused-policy detection is DNS-only — no per-policy match dimension is confirmed available for HTTP or Network (L4) Gateway rules via GraphQL today.",
     },
+    controlCoverage,
     errors: fetchErrors,
   };
 
@@ -703,6 +815,13 @@ export async function generateZerotrustData(input: {
   // a D1 error here never blocks the report itself.
   zerotrust.baseline = await getBaseline(db, accountId, zerotrust.meta.generatedAt, zerotrust.summary);
   await saveSnapshot(db, accountId, zerotrust.meta.generatedAt, since, until, days, zerotrust.summary);
+
+  // ── Remediation register ────────────────────────────────────────────────
+  // Sync this period's findings (open/update/auto-resolve), then read back
+  // the full register so the report always reflects durable state (age,
+  // owner, status) rather than only this run's raw findings.
+  await syncRemediationFindings(db, accountId, zerotrust.meta.generatedAt, remediationFindings);
+  zerotrust.remediationRegister = await getRemediationRegister(db, accountId);
 
   return zerotrust;
 }

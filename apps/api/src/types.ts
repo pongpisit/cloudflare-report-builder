@@ -419,7 +419,71 @@ export interface ZeroTrustData {
   // measured". Keyed by an informal section id, not a strict enum. ─────────
   dataConfidence?: Record<string, string>;
 
+  // ── Control Coverage & Effectiveness (real; derived from already-fetched
+  // config + analytics data — no new external API calls) ───────────────────
+  // Answers the SSE-competitor-standard question "coverage vs total", not
+  // just "here is an event count": how much of the environment is actually
+  // protected, and which configured controls saw zero real-world use this
+  // period (a strong misconfiguration/waste signal on its own).
+  controlCoverage?: {
+    access: {
+      totalApps: number;
+      enabledApps: number;
+      appsWithPolicies: number;
+      appsWithoutPolicies: number;   // policyCount === 0 — likely misconfigured, unprotected app
+      appsWithMfa: number;
+      appsWithoutMfa: number;
+      mfaCoveragePct: number;        // 0-100, of enabled apps
+    };
+    gatewayDns: {
+      totalPolicies: number;
+      enabledPolicies: number;
+      blockPolicies: number;
+      // Enabled DNS policies with 0 matched queries in the report period —
+      // real, via the policyName dimension on gatewayResolverQueriesAdaptiveGroups
+      // (same data source as the policy-annotation fix). HTTP/L4 have no
+      // confirmed per-policy dimension, so this is DNS-only, not fabricated
+      // for the other rule types.
+      unusedPolicies: { name: string }[];
+    };
+    gatewayHttp: { totalPolicies: number; enabledPolicies: number };
+    gatewayL4: { totalPolicies: number; enabledPolicies: number };
+    seats: {
+      total: number;
+      activeInPeriod: number;
+      neverLoggedIn: number;
+      activePct: number;             // 0-100
+    };
+  };
+
+  // ── Remediation Register (real; D1-backed lifecycle tracking of the same
+  // evidence-based findings used for `recommendations`, keyed by a stable
+  // `findingKey` so status/owner/age persist and auto-resolve across report
+  // runs instead of being a fresh, unauditable list every time) ─────────────
+  remediationRegister?: RemediationItem[];
+
   errors: Record<string, string>;
+}
+
+export type RemediationStatus = "open" | "in_progress" | "accepted_risk" | "resolved";
+
+export interface RemediationItem {
+  id: string;
+  accountId: string;
+  findingKey: string;
+  title: string;
+  description: string;
+  benefit: string;
+  severity: "high" | "medium" | "low";
+  status: RemediationStatus;
+  ownerEmail: string | null;
+  dueDate: string | null;
+  evidence: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+  occurrences: number;
+  ageDays: number;   // computed at read-time from firstSeenAt to now (or resolvedAt if resolved)
 }
 
 // ─── Time Helpers ─────────────────────────────────────────────────────────────

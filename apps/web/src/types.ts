@@ -609,7 +609,54 @@ export interface ZeroTrustData {
   } | null;
   dataConfidence?: Record<string, string>;
 
+  // ── Control Coverage & Effectiveness (real; derived from already-fetched
+  // config + analytics data) ────────────────────────────────────────────────
+  controlCoverage?: {
+    access: {
+      totalApps: number;
+      enabledApps: number;
+      appsWithPolicies: number;
+      appsWithoutPolicies: number;
+      appsWithMfa: number;
+      appsWithoutMfa: number;
+      mfaCoveragePct: number;
+    };
+    gatewayDns: {
+      totalPolicies: number;
+      enabledPolicies: number;
+      blockPolicies: number;
+      unusedPolicies: { name: string }[];
+    };
+    gatewayHttp: { totalPolicies: number; enabledPolicies: number };
+    gatewayL4: { totalPolicies: number; enabledPolicies: number };
+    seats: { total: number; activeInPeriod: number; neverLoggedIn: number; activePct: number };
+  };
+
+  // ── Remediation Register (real; D1-backed lifecycle tracking) ────────────
+  remediationRegister?: RemediationItem[];
+
   errors: Record<string, string>;
+}
+
+export type RemediationStatus = "open" | "in_progress" | "accepted_risk" | "resolved";
+
+export interface RemediationItem {
+  id: string;
+  accountId: string;
+  findingKey: string;
+  title: string;
+  description: string;
+  benefit: string;
+  severity: "high" | "medium" | "low";
+  status: RemediationStatus;
+  ownerEmail: string | null;
+  dueDate: string | null;
+  evidence: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+  occurrences: number;
+  ageDays: number;
 }
 
 // ─── Scheduled Reports ────────────────────────────────────────────────────────

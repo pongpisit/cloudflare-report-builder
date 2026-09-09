@@ -35,6 +35,7 @@ import {
 } from "./routes/schedules";
 import { handleScheduleZones } from "./routes/schedule-options";
 import { handleGetSettings, handleUpdateSettings, handleTestSettings } from "./routes/settings";
+import { handleGetRemediation, handlePatchRemediation } from "./routes/remediation";
 import { scheduled } from "./scheduler";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -61,7 +62,7 @@ app.use("*", async (c, next) => {
 
   return cors({
     origin: isAllowed ? origin : (allowedOrigins[0] ?? ""),
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowHeaders: ["Content-Type"],
     maxAge: 86400,
   })(c, next);
@@ -164,6 +165,10 @@ app.get ("/api/audit/:key", handleAuditGet);
 // Cloudflare One (Zero Trust) routes
 app.post("/api/zerotrust",  (c, next) => applyRateLimit(c, next), handleFetchZeroTrust);
 app.post("/api/zt-summary", (c, next) => applyRateLimit(c, next), handleZTSummary);
+
+// Remediation register — lifecycle tracking of Zero Trust findings (D1)
+app.get  ("/api/remediation",     handleGetRemediation);
+app.patch("/api/remediation/:id", handlePatchRemediation);
 
 // ─── Scheduled report emails — configuration dashboard (D1) ──────────────────
 app.get ("/api/schedule/zones",       handleScheduleZones);          // zone picker (backend token)

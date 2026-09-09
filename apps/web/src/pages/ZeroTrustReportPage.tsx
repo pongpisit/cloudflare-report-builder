@@ -33,6 +33,8 @@ import ZTDeviceExperienceSection from "./zt-sections/ZTDeviceExperienceSection";
 import ZTTunnelHealthSection     from "./zt-sections/ZTTunnelHealthSection";
 import ZTDlpSection              from "./zt-sections/ZTDlpSection";
 import ZTConfigChangesSection    from "./zt-sections/ZTConfigChangesSection";
+import ZTControlCoverageSection    from "./zt-sections/ZTControlCoverageSection";
+import ZTRemediationRegisterSection from "./zt-sections/ZTRemediationRegisterSection";
 import ZTOpportunitySection      from "./zt-sections/ZTOpportunitySection";
 
 import ZTRecommendationsSection    from "./zt-sections/ZTRecommendationsSection";
@@ -273,6 +275,8 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
               const hasTunnels     = data.summary.tunnelsTotal > 0;
               const hasDlp         = (data.dlpProfiles?.length ?? 0) > 0 || (data.summary.casbFindingsCount ?? 0) > 0;
               const hasConfigChanges = (data.configChanges?.length ?? 0) > 0;
+              const hasControlCoverage = !!data.controlCoverage;
+              const hasRemediationRegister = (data.remediationRegister?.length ?? 0) > 0;
 
               const entries: string[][] = [
                 ["Executive Summary"],
@@ -296,6 +300,8 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
                 ...(hasTunnels ? [["Tunnel Health"]] : []),
                 ...(hasDlp ? [["Data Loss Prevention (DLP) & CASB"]] : []),
                 ...(hasConfigChanges ? [["Configuration Changes"]] : []),
+                ...(hasControlCoverage ? [["Control Coverage & Effectiveness"]] : []),
+                ...(hasRemediationRegister ? [["Remediation Register"]] : []),
                 ["Security Posture Score"],
                 ...(isPoc ? [
                   ["Undeployed Capabilities"],
@@ -451,6 +457,10 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
 
         {/* GROUP 6 — Operational: what configuration changed this period */}
         <ZTConfigChangesSection    data={data} />
+
+        {/* GROUP 7 — Executive control coverage + tracked remediation */}
+        <ZTControlCoverageSection    data={data} />
+        <ZTRemediationRegisterSection data={data} />
 
         {/* 8. Security posture score */}
         <ZTPostureScoreSection     data={data} />

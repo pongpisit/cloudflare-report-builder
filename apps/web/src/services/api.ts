@@ -2,6 +2,7 @@ import type {
   AppSecData, ZeroTrustData, ReportInput, ZoneOption,
   ScheduleConfig, ScheduleInput, ScheduleHistoryEntry,
   BackendSettingsState, BackendSettingsUpdate,
+  RemediationItem, RemediationStatus,
 } from "../types";
 
 // In production, the Pages Function at /functions/api/[[path]].ts proxies
@@ -24,7 +25,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function request<T>(path: string, method: "GET" | "PUT" | "DELETE", body?: unknown): Promise<T> {
+async function request<T>(path: string, method: "GET" | "PUT" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
@@ -213,4 +214,28 @@ export interface ConnectionTestResult {
 export async function testBackendConnection(): Promise<ConnectionTestResult> {
   const result = await post<{ ok: boolean; result: ConnectionTestResult }>("/api/settings/test", {});
   return result.result;
+}
+
+// ─── Zero Trust Remediation Register ──────────────────────────────────────────
+
+/** Re-fetches the current register for an account — used after a status/owner
+ *  change so the report reflects the persisted state without a full re-run. */
+export async function fetchRemediationRegister(accountId: string): Promise<RemediationItem[]> {
+  const result = await request<{ ok: boolean; items: RemediationItem[] }>(
+    `/api/remediation?accountId=${encodeURIComponent(accountId)}`,
+    "GET"
+  );
+  return result.items;
+}
+
+export async function updateRemediationItem(
+  id: string,
+  update: { status?: RemediationStatus; ownerEmail?: string | null; dueDate?: string | null }
+): Promise<RemediationItem> {
+  const result = await request<{ ok: boolean; item: RemediationItem }>(
+    `/api/remediation/${id}`,
+    "PATCH",
+    update
+  );
+  return result.item;
 }
