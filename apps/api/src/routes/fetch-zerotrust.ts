@@ -41,6 +41,7 @@ import { last30Days as l30 } from "../services/cf-graphql";
 import { getBaseline, saveSnapshot } from "../services/zt-snapshots";
 import { syncRemediationFindings, getRemediationRegister, type RemediationFinding } from "../services/zt-remediation";
 import { syncCasbFindings, getCasbFindingRegister, type CasbFindingInput } from "../services/zt-casb-tracking";
+import { syncAlerts, getAlertRegister, type AlertInput } from "../services/zt-alert-tracking";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
@@ -833,6 +834,16 @@ export async function generateZerotrustData(input: {
   }));
   await syncCasbFindings(db, accountId, zerotrust.meta.generatedAt, casbFindingInputs);
   zerotrust.casbFindingRegister = await getCasbFindingRegister(db, accountId);
+
+  // ── Alert investigation register ──────────────────────────────────────
+  // Ingests real Cloudflare alerting history (REST /alerting/v3/history —
+  // previously fetched into `recentAlerts` but never rendered anywhere)
+  // into a durable, operator-tracked investigation workflow.
+  const alertInputs: AlertInput[] = recentAlerts.map((a) => ({
+    id: a.id, name: a.name, alertType: a.alertType, sentAt: a.sentAt, silenced: a.silenced,
+  }));
+  await syncAlerts(db, accountId, zerotrust.meta.generatedAt, alertInputs);
+  zerotrust.alertRegister = await getAlertRegister(db, accountId);
 
   return zerotrust;
 }

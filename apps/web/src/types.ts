@@ -638,6 +638,10 @@ export interface ZeroTrustData {
   // ── CASB Finding Register (real; D1-backed lifecycle tracking) ───────────
   casbFindingRegister?: CasbFindingItem[];
 
+  // ── Alert Investigation Register (real; D1-backed tracking of native
+  // Cloudflare alerting history) ────────────────────────────────────────
+  alertRegister?: AlertTrackingItem[];
+
   errors: Record<string, string>;
 }
 
@@ -679,6 +683,23 @@ export interface CasbFindingItem {
   lastSeenAt: string;
   clearedAt: string | null;
   occurrences: number;
+  ageDays: number;
+}
+
+export type AlertTrackingStatus = "new" | "acknowledged" | "investigating" | "resolved";
+
+export interface AlertTrackingItem {
+  id: string;
+  accountId: string;
+  alertId: string;
+  name: string;
+  alertType: string;
+  sentAt: string;
+  silenced: boolean;
+  status: AlertTrackingStatus;
+  ownerEmail: string | null;
+  dueDate: string | null;
+  firstSeenAt: string;
   ageDays: number;
 }
 

@@ -4,6 +4,7 @@ import type {
   BackendSettingsState, BackendSettingsUpdate,
   RemediationItem, RemediationStatus,
   CasbFindingItem, CasbFindingStatus,
+  AlertTrackingItem, AlertTrackingStatus,
 } from "../types";
 
 // In production, the Pages Function at /functions/api/[[path]].ts proxies
@@ -257,6 +258,28 @@ export async function updateCasbFindingItem(
 ): Promise<CasbFindingItem> {
   const result = await request<{ ok: boolean; item: CasbFindingItem }>(
     `/api/casb-findings/${id}`,
+    "PATCH",
+    update
+  );
+  return result.item;
+}
+
+// ─── Alert Investigation Register ──────────────────────────────────────────────
+
+export async function fetchAlertRegister(accountId: string): Promise<AlertTrackingItem[]> {
+  const result = await request<{ ok: boolean; items: AlertTrackingItem[] }>(
+    `/api/alert-register?accountId=${encodeURIComponent(accountId)}`,
+    "GET"
+  );
+  return result.items;
+}
+
+export async function updateAlertItem(
+  id: string,
+  update: { status?: AlertTrackingStatus; ownerEmail?: string | null; dueDate?: string | null }
+): Promise<AlertTrackingItem> {
+  const result = await request<{ ok: boolean; item: AlertTrackingItem }>(
+    `/api/alert-register/${id}`,
     "PATCH",
     update
   );

@@ -37,6 +37,7 @@ import { handleScheduleZones } from "./routes/schedule-options";
 import { handleGetSettings, handleUpdateSettings, handleTestSettings } from "./routes/settings";
 import { handleGetRemediation, handlePatchRemediation } from "./routes/remediation";
 import { handleGetCasbFindings, handlePatchCasbFinding } from "./routes/casb-findings";
+import { handleGetAlertRegister, handlePatchAlertRegister } from "./routes/alert-register";
 import { scheduled } from "./scheduler";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -174,6 +175,10 @@ app.patch("/api/remediation/:id", handlePatchRemediation);
 // CASB / Data Security Posture finding register — lifecycle tracking (D1)
 app.get  ("/api/casb-findings",     handleGetCasbFindings);
 app.patch("/api/casb-findings/:id", handlePatchCasbFinding);
+
+// Alert investigation register — Cloudflare native alerting history (D1)
+app.get  ("/api/alert-register",     handleGetAlertRegister);
+app.patch("/api/alert-register/:id", handlePatchAlertRegister);
 
 // ─── Scheduled report emails — configuration dashboard (D1) ──────────────────
 app.get ("/api/schedule/zones",       handleScheduleZones);          // zone picker (backend token)

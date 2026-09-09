@@ -35,6 +35,7 @@ import ZTDlpSection              from "./zt-sections/ZTDlpSection";
 import ZTConfigChangesSection    from "./zt-sections/ZTConfigChangesSection";
 import ZTControlCoverageSection    from "./zt-sections/ZTControlCoverageSection";
 import ZTRemediationRegisterSection from "./zt-sections/ZTRemediationRegisterSection";
+import ZTAlertRegisterSection      from "./zt-sections/ZTAlertRegisterSection";
 import ZTOpportunitySection      from "./zt-sections/ZTOpportunitySection";
 
 import ZTRecommendationsSection    from "./zt-sections/ZTRecommendationsSection";
@@ -277,6 +278,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
               const hasConfigChanges = (data.configChanges?.length ?? 0) > 0;
               const hasControlCoverage = !!data.controlCoverage;
               const hasRemediationRegister = (data.remediationRegister?.length ?? 0) > 0;
+              const hasAlertRegister = (data.alertRegister?.length ?? 0) > 0;
 
               const entries: string[][] = [
                 ["Executive Summary"],
@@ -302,6 +304,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
                 ...(hasConfigChanges ? [["Configuration Changes"]] : []),
                 ...(hasControlCoverage ? [["Control Coverage & Effectiveness"]] : []),
                 ...(hasRemediationRegister ? [["Remediation Register"]] : []),
+                ...(hasAlertRegister ? [["Alert Investigation Register"]] : []),
                 ["Security Posture Score"],
                 ...(isPoc ? [
                   ["Undeployed Capabilities"],
@@ -461,6 +464,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
         {/* GROUP 7 — Executive control coverage + tracked remediation */}
         <ZTControlCoverageSection    data={data} />
         <ZTRemediationRegisterSection data={data} />
+        <ZTAlertRegisterSection      data={data} />
 
         {/* 8. Security posture score */}
         <ZTPostureScoreSection     data={data} />

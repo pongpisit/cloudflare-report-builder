@@ -469,6 +469,12 @@ export interface ZeroTrustData {
   // boolean conditions) ──────────────────────────────────────────────────
   casbFindingRegister?: CasbFindingItem[];
 
+  // ── Alert Investigation Register (real; D1-backed investigation-status
+  // tracking of REST /accounts/{id}/alerting/v3/history entries — this
+  // dataset was previously fetched into `recentAlerts` but never rendered
+  // anywhere in the report) ─────────────────────────────────────────────
+  alertRegister?: AlertTrackingItem[];
+
   errors: Record<string, string>;
 }
 
@@ -510,6 +516,23 @@ export interface CasbFindingItem {
   lastSeenAt: string;
   clearedAt: string | null;   // set when Cloudflare stops reporting this finding (auto-detected)
   occurrences: number;
+  ageDays: number;
+}
+
+export type AlertTrackingStatus = "new" | "acknowledged" | "investigating" | "resolved";
+
+export interface AlertTrackingItem {
+  id: string;
+  accountId: string;
+  alertId: string;
+  name: string;
+  alertType: string;
+  sentAt: string;
+  silenced: boolean;
+  status: AlertTrackingStatus;
+  ownerEmail: string | null;
+  dueDate: string | null;
+  firstSeenAt: string;
   ageDays: number;
 }
 
