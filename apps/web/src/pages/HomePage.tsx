@@ -297,10 +297,12 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                     className={`ar-input ${touched.accountId && !accountOk ? "ar-input-error" : ""}`}
                     style={{ flex: 1, fontFamily: "monospace" }}
                   />
-                  <button type="button" onClick={handleFetchZones} disabled={!canFetchZones}
-                    className="ar-btn" style={{ borderLeft: "none", flexShrink: 0 }}>
-                    {fetchingZones ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Fetching…</> : <><Globe size={12} /> Fetch Zones</>}
-                  </button>
+                  {product === "appsec" && (
+                    <button type="button" onClick={handleFetchZones} disabled={!canFetchZones}
+                      className="ar-btn" style={{ borderLeft: "none", flexShrink: 0 }}>
+                      {fetchingZones ? <><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Fetching…</> : <><Globe size={12} /> Fetch Zones</>}
+                    </button>
+                  )}
                 </div>
                 {touched.accountId && !accountOk && (
                   <p style={{ fontSize: 11, color: "#d51121", marginTop: 4 }}>Account ID must be a 32-character hex string</p>
