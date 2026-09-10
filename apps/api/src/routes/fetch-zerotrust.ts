@@ -11,7 +11,7 @@ import {
   getAccessApps, getAccessPolicies, getAccessIdps,
   getGatewayRules, getGatewayLocations, getGatewayCategories, buildGatewayCategoryMap,
   getWarpDevices, getWarpPostureRules,
-  getCloudflaredTunnels, getTunnelRoutes,
+  getCloudflaredTunnels, getCloudflaredTunnelCounts, getTunnelRoutes,
   getDlpProfiles, getMcpPortals,
   getAccessUsers, getCasbFindings, getAlertsHistory,
   getAccountAuditLogs, getDexFleetStatusLive,
@@ -42,6 +42,16 @@ import { getBaseline, saveSnapshot } from "../services/zt-snapshots";
 import { syncRemediationFindings, getRemediationRegister, type RemediationFinding } from "../services/zt-remediation";
 import { syncCasbFindings, getCasbFindingRegister, type CasbFindingInput } from "../services/zt-casb-tracking";
 import { syncAlerts, getAlertRegister, type AlertInput } from "../services/zt-alert-tracking";
+import {
+  fetchAccessLoginsSummary, fetchAccessLoginsTimeSeries,
+  fetchAccessLoginsTopApps, fetchAccessLoginsTopUsers,
+  fetchGatewayDnsAnalyticsSummary, fetchGatewayDnsTopBlockedDestinations,
+  fetchGatewayHttpAnalyticsSummary, fetchGatewayHttpTopBandwidthUsers, fetchGatewayHttpTopCountries,
+  fetchGatewayNetworkAnalyticsSummary,
+  fetchGatewayNslTotalBytes, fetchGatewayNslByOfframp, fetchGatewayNslTopUsers,
+  fetchDlpActivitySummary, fetchDlpProfileMatches, fetchDlpTopWebsites,
+  fetchCasbDlpFindingsCount, fetchCdsScanResultsSummary,
+} from "../services/cf-dashboard-analytics";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
@@ -117,6 +127,7 @@ export async function generateZerotrustData(input: {
     getWarpDevices(token, accountId),
     getWarpPostureRules(token, accountId),
     getCloudflaredTunnels(token, accountId),
+    getCloudflaredTunnelCounts(token, accountId),
     getTunnelRoutes(token, accountId),
     getDlpProfiles(token, accountId),
     getMcpPortals(token, accountId),
@@ -132,7 +143,7 @@ export async function generateZerotrustData(input: {
 
   const [
     appsR, idpsR, gatewayRulesR, locationsR, gwCategoriesR,
-    warpDevicesR, postureRulesR, tunnelsR, tunnelRoutesR, dlpProfilesR,
+    warpDevicesR, postureRulesR, tunnelsR, tunnelCountsR, tunnelRoutesR, dlpProfilesR,
     mcpPortalsR,
     accessUsersR, casbFindingsR, alertsHistoryR,
     auditLogsR, dexFleetStatusR,
@@ -145,16 +156,25 @@ export async function generateZerotrustData(input: {
   const gwLocations  = sg(locationsR,    "gwLoc",     []);
   const gwCategories = sg(gwCategoriesR, "gwCats",    []);
   const gwCategoryMap = buildGatewayCategoryMap(gwCategories as Parameters<typeof buildGatewayCategoryMap>[0]);
-  const rawDevices   = sg(warpDevicesR,  "devices",   []);
+  // getWarpDevices/getAccessUsers now return { sample, totalCount } — the
+  // REST list truncates at per_page while totalCount (result_info) reports
+  // the real fleet/seat size (confirmed live: a real account had 4,373
+  // enrolled devices and 1,921 seats, both far above the old per-page caps).
+  const warpDevicesResult = sg(warpDevicesR, "devices", { devices: [], totalCount: 0 });
+  const rawDevices   = warpDevicesResult.devices;
+  const warpDevicesTotalCount = warpDevicesResult.totalCount;
   const postureRules = sg(postureRulesR, "posture",   []);
   const rawTunnels   = sg(tunnelsR,      "tunnels",   []);
+  const tunnelCounts = sg(tunnelCountsR, "tunnelCounts", { total: 0, healthy: 0 });
   const rawRoutes    = sg(tunnelRoutesR, "routes",    []);
   const rawDlpProfs  = sg(dlpProfilesR,  "dlp",       []);
   const rawMcpPortals = sg(mcpPortalsR,  "mcpPortals",[]) as Array<{ id: string; name: string; hostname: string }>;
-  const rawAccessUsers = sg(accessUsersR, "accessUsers", []) as Array<{
+  const accessUsersResult = sg(accessUsersR, "accessUsers", { users: [], totalCount: 0 });
+  const rawAccessUsers = accessUsersResult.users as Array<{
     id: string; uid: string; name?: string; email: string;
     last_successful_login?: string; access_seat?: boolean; gateway_seat?: boolean;
   }>;
+  const accessUsersTotalCount = accessUsersResult.totalCount;
   const rawCasbFindings = sg(casbFindingsR, "casbFindings", []) as Array<{ severity?: string; type?: string; resource_name?: string }>;
   const rawAlertsHistory = sg(alertsHistoryR, "alertsHistory", []) as Array<{
     id: string; name: string; alert_type: string; sent: string; silenced?: boolean;
@@ -191,6 +211,18 @@ export async function generateZerotrustData(input: {
     warpStatusBreakdownR, warpStatusSeriesR, warpLatestStatusR,
     networkAnalyticsR, privateNetOriginsR,
     genAiR,
+    // Dashboard analytics API — see cf-dashboard-analytics.ts. These are the
+    // EXACT endpoints the Cloudflare dashboard's own Zero Trust Analytics
+    // Overview page uses (verified live against a real account), and are
+    // what corrects the Access "auth events" number (WARP client session
+    // noise inflated it 300x on a real account — see file header comment).
+    accessLoginsSummaryR, accessLoginsSeriesR, accessLoginsTopAppsR, accessLoginsTopUsersR,
+    dnsAnalyticsSummaryR, dnsTopBlockedDestR,
+    httpAnalyticsSummaryR, httpTopBandwidthUsersR, httpTopCountriesR,
+    networkAnalyticsSummaryR,
+    nslTotalBytesR, nslByOfframpR, nslTopUsersR,
+    dlpActivityR, dlpProfileMatchesR, dlpTopWebsitesR,
+    casbDlpFindingsR, cdsScanResultsR,
   ] = await Promise.allSettled([
     // Access
     fetchAccessAuthTimeSeries(token, accountId, adSince, adUntil),
@@ -234,6 +266,26 @@ export async function generateZerotrustData(input: {
     fetchPrivateNetworkOrigins(token, accountId, adSince, adUntil, 15),
     // Generative AI usage — real Cloudflare category classification (id 184 "Artificial Intelligence")
     fetchGenAiUsage(token, accountId, gwAdSince, adUntil),
+    // Dashboard analytics API (beta) — dashboard-exact numbers, GraphQL
+    // above remains as the fallback source if any of these fail.
+    fetchAccessLoginsSummary(token, accountId, adSince, adUntil),
+    fetchAccessLoginsTimeSeries(token, accountId, adSince, adUntil),
+    fetchAccessLoginsTopApps(token, accountId, adSince, adUntil, 10),
+    fetchAccessLoginsTopUsers(token, accountId, adSince, adUntil, 15),
+    fetchGatewayDnsAnalyticsSummary(token, accountId, adSince, adUntil),
+    fetchGatewayDnsTopBlockedDestinations(token, accountId, adSince, adUntil, 15),
+    fetchGatewayHttpAnalyticsSummary(token, accountId, adSince, adUntil),
+    fetchGatewayHttpTopBandwidthUsers(token, accountId, adSince, adUntil, 10),
+    fetchGatewayHttpTopCountries(token, accountId, adSince, adUntil, 10),
+    fetchGatewayNetworkAnalyticsSummary(token, accountId, adSince, adUntil),
+    fetchGatewayNslTotalBytes(token, accountId, adSince, adUntil),
+    fetchGatewayNslByOfframp(token, accountId, adSince, adUntil),
+    fetchGatewayNslTopUsers(token, accountId, adSince, adUntil, 10),
+    fetchDlpActivitySummary(token, accountId, adSince),
+    fetchDlpProfileMatches(token, accountId, adSince),
+    fetchDlpTopWebsites(token, accountId, adSince),
+    fetchCasbDlpFindingsCount(token, accountId, adSince),
+    fetchCdsScanResultsSummary(token, accountId, adSince, adUntil),
   ]);
 
   // Unwrap results
@@ -277,56 +329,119 @@ export async function generateZerotrustData(input: {
   const privateNetOrigins  = sg(privateNetOriginsR, "privateNetOrigins", []);
   const genAi               = sg(genAiR,     "genAi",     { totalRequests: 0, uniqueApps: 0, uniqueUsers: 0, apps: [], users: [] });
 
+  // ── Dashboard analytics API results (beta; see cf-dashboard-analytics.ts) ──
+  const accessLoginsSummary = sg(accessLoginsSummaryR, "accessLoginsSummary", null);
+  const accessLoginsSeries  = sg(accessLoginsSeriesR,  "accessLoginsSeries",  []);
+  const accessLoginsTopApps = sg(accessLoginsTopAppsR, "accessLoginsTopApps", []);
+  const accessLoginsTopUsers = sg(accessLoginsTopUsersR, "accessLoginsTopUsers", []);
+  const dnsAnalyticsSummary = sg(dnsAnalyticsSummaryR, "dnsAnalyticsSummary", null);
+  const dnsTopBlockedDest   = sg(dnsTopBlockedDestR,   "dnsTopBlockedDest",   []);
+  const httpAnalyticsSummary = sg(httpAnalyticsSummaryR, "httpAnalyticsSummary", null);
+  const httpTopBandwidthUsers = sg(httpTopBandwidthUsersR, "httpTopBandwidthUsers", []);
+  const httpTopCountries    = sg(httpTopCountriesR,    "httpTopCountries",    []);
+  const networkAnalyticsSummary = sg(networkAnalyticsSummaryR, "networkAnalyticsSummary", null);
+  const nslTotalBytes = sg(nslTotalBytesR, "nslTotalBytes", null);
+  const nslByOfframp  = sg(nslByOfframpR,  "nslByOfframp",  []);
+  const nslTopUsers   = sg(nslTopUsersR,   "nslTopUsers",   []);
+  const dlpActivity   = sg(dlpActivityR,   "dlpActivity",   null);
+  const dlpProfileMatches = sg(dlpProfileMatchesR, "dlpProfileMatches", []);
+  const dlpTopWebsites    = sg(dlpTopWebsitesR,    "dlpTopWebsites",    []);
+  const casbDlpFindings   = sg(casbDlpFindingsR,   "casbDlpFindings",   null);
+  const cdsScanResults    = sg(cdsScanResultsR,    "cdsScanResults",    null);
+
+  // Dashboard-exact top blocked DNS destinations, enriched with category/
+  // policy/location from the existing GraphQL breakdown by domain-name
+  // match where available (best-effort — the analytics API doesn't return
+  // those dimensions, only destination + queriesTotal).
+  const dnsTopBlockedMerged = dnsTopBlockedDest.map((d: { destination: string; queriesTotal: number }) => {
+    const match = (dnsTopDoms as Array<{ domain: string; category: string; policyName: string; locationName: string }>)
+      .find((x) => x.domain === d.destination);
+    return {
+      domain: d.destination, count: d.queriesTotal,
+      category: match?.category ?? "Uncategorized",
+      policyName: match?.policyName ?? "", locationName: match?.locationName ?? "",
+    };
+  });
+
   // ── Derived KPIs ──────────────────────────────────────────────────────────
-  const totalAuth   = authSeries.reduce((s: number, d: { allow: number; block: number; mfa: number }) => s + d.allow + d.block + d.mfa, 0);
-  const totalBlock  = authSeries.reduce((s: number, d: { block: number }) => s + d.block, 0);
+  // Headline auth events: the dashboard-exact `access-logins/summary` count
+  // (real interactive login attempts) is authoritative when available —
+  // confirmed live that the GraphQL-derived number below counts EVERY login
+  // request including WARP client session/reconnect events and service
+  // tokens (300x inflation on a real account: 4,070 raw events vs 12 real
+  // interactive attempts for the same account/period). GraphQL remains the
+  // fallback if the beta analytics endpoint is unavailable.
+  const rawTotalAuth  = authSeries.reduce((s: number, d: { allow: number; block: number; mfa: number }) => s + d.allow + d.block + d.mfa, 0);
+  const rawTotalBlock = authSeries.reduce((s: number, d: { block: number }) => s + d.block, 0);
   const totalMfa    = authSeries.reduce((s: number, d: { mfa: number }) => s + d.mfa, 0);
+  const totalAuth   = accessLoginsSummary?.attemptsTotal ?? rawTotalAuth;
+  const totalBlock  = accessLoginsSummary?.attemptsBlocked ?? rawTotalBlock;
   const successRate = totalAuth > 0 ? Math.round(((totalAuth - totalBlock) / totalAuth) * 100) : 100;
+  // How much of the raw GraphQL total was WARP client / service-token noise
+  // — real and worth showing, just not as the headline "auth events" KPI.
+  const warpAndServiceTokenEvents = Math.max(0, rawTotalAuth - totalAuth);
 
   const uniqueUsersSet = new Set((topUsers as Array<{ email: string }>).map((u) => u.email));
   const uniqueAppsSet  = new Set((topApps  as Array<{ name: string }>).map((a) => a.name));
 
-  const totalDnsQ   = (rawDnsSummary as { queriesTotal?: number } | null)?.queriesTotal
+  // Dashboard-exact totals (analytics API) take priority; GraphQL/REST
+  // summaries remain the fallback chain if the beta endpoint is unavailable.
+  const totalDnsQ   = dnsAnalyticsSummary?.queriesTotal
+    ?? (rawDnsSummary as { queriesTotal?: number } | null)?.queriesTotal
     ?? dnsSeries.reduce((s: number, d: { total: number }) => s + d.total, 0);
-  const totalDnsBlk = (rawDnsSummary as { queriesBlocked?: number } | null)?.queriesBlocked
+  const totalDnsBlk = dnsAnalyticsSummary?.queriesBlocked
+    ?? (rawDnsSummary as { queriesBlocked?: number } | null)?.queriesBlocked
     ?? dnsSeries.reduce((s: number, d: { blocked: number }) => s + d.blocked, 0);
-  const totalHttpQ   = (rawHttpSummary as { requestsTotal?: number } | null)?.requestsTotal
+  const totalHttpQ   = httpAnalyticsSummary?.requestsTotal
+    ?? (rawHttpSummary as { requestsTotal?: number } | null)?.requestsTotal
     ?? httpSeries.reduce((s: number, d: { total: number }) => s + d.total, 0);
-  const totalHttpBlk = (rawHttpSummary as { requestsBlocked?: number } | null)?.requestsBlocked
+  const totalHttpBlk = httpAnalyticsSummary?.requestsBlocked
+    ?? (rawHttpSummary as { requestsBlocked?: number } | null)?.requestsBlocked
     ?? httpSeries.reduce((s: number, d: { blocked: number }) => s + d.blocked, 0);
-  const totalHttpRbi = (rawHttpSummary as { rbiSessions?: number } | null)?.rbiSessions ?? 0;
+  const totalHttpRbi = httpAnalyticsSummary?.requestsIsolated
+    ?? (rawHttpSummary as { rbiSessions?: number } | null)?.rbiSessions ?? 0;
   const totalHttpQuarantined = (rawHttpSummary as { quarantinedRequests?: number } | null)?.quarantinedRequests ?? 0;
-  const totalMcpHttp = (rawHttpSummary as { mcpRequests?: number } | null)?.mcpRequests ?? 0;
+  const totalMcpHttp = httpAnalyticsSummary?.mcpUrlCountTotal
+    ?? (rawHttpSummary as { mcpRequests?: number } | null)?.mcpRequests ?? 0;
 
   const l4DataObj = l4Data as { timeSeries: Array<{ date: string; total: number; blocked: number }>; blockedDestinations: unknown[]; protocols: unknown[]; sourceCountries: unknown[]; portBreakdown: unknown[] };
-  const totalL4    = l4DataObj.timeSeries.reduce((s, d) => s + d.total,   0);
-  const totalL4Blk = l4DataObj.timeSeries.reduce((s, d) => s + d.blocked, 0);
+  const totalL4    = networkAnalyticsSummary?.requestsTotal   ?? l4DataObj.timeSeries.reduce((s, d) => s + d.total,   0);
+  const totalL4Blk = networkAnalyticsSummary?.requestsBlocked ?? l4DataObj.timeSeries.reduce((s, d) => s + d.blocked, 0);
 
   const shadowItObj = shadowIt as {
     discoveredApps: unknown[]; categoryBreakdown: unknown[]; userAppMappings: unknown[];
     appStatuses: Record<string, string>;
   };
 
-  // REST /accounts/{id}/devices and the GraphQL warpDeviceAdaptiveGroups
-  // dataset can disagree on device count in practice (confirmed live on a
-  // real account: REST returned 0 while GraphQL analytics showed 5 distinct
-  // deviceIds with real connection events in the period — GraphQL tracks
-  // historical connection events for any device that connected during the
-  // window, while the REST list reflects current MDM/registration state).
-  // Both are real signals; take the larger (more complete) one rather than
-  // showing an inconsistent "0 enrolled, 5 offline" combination.
-  const warpCount = Math.max((rawDevices as Array<unknown>).length, (warpLatestStatus as { total: number }).total);
+  // REST /accounts/{id}/devices `result_info.total_count`, the GraphQL
+  // warpDeviceAdaptiveGroups dataset, and Gateway DNS analytics' own
+  // uniqueDeviceCount can all disagree on device count in practice
+  // (confirmed live on a real account: 4,373 via REST total_count, 2,641
+  // via DNS analytics uniqueDeviceCount for the period, 841 distinct
+  // deviceIds with connection-status events in the period via GraphQL).
+  // These measure different things (all-time enrolled vs. active-in-period
+  // vs. devices with a DNS query in-period) — take the largest as the
+  // "enrolled devices" headline since it is the closest to true fleet size,
+  // never the smallest/most-truncated one.
+  const warpCount = Math.max(
+    warpDevicesTotalCount,
+    (warpLatestStatus as { total: number }).total,
+    dnsAnalyticsSummary?.uniqueDeviceCount ?? 0
+  );
 
   // ── Users & seats (real, from REST /access/users) ──────────────────────────
   // access_seat / gateway_seat are real per-user license flags; last_successful_login
   // is a real timestamp used to compute "active in this report period" honestly
   // (no fabricated MAU estimate — a user only counts as active if they actually
-  // logged in within [since, until]).
+  // logged in within [since, until]). seatsTotal uses the REAL total from
+  // result_info.total_count (see getAccessUsers) — the per-flag aggregates
+  // below are computed over the fetched sample only (capped at 5,000 users)
+  // and are noted as approximate on accounts whose true seat count exceeds it.
   const sinceMs = new Date(since).getTime();
   const untilMs = new Date(until).getTime();
   const seatsAccessTotal  = rawAccessUsers.filter((u) => u.access_seat).length;
   const seatsGatewayTotal = rawAccessUsers.filter((u) => u.gateway_seat).length;
-  const seatsTotal        = new Set(rawAccessUsers.map((u) => u.email)).size;
+  const seatsTotal        = accessUsersTotalCount || new Set(rawAccessUsers.map((u) => u.email)).size;
   const seatsActiveInPeriod = rawAccessUsers.filter((u) => {
     if (!u.last_successful_login) return false;
     const t = new Date(u.last_successful_login).getTime();
@@ -421,7 +536,11 @@ export async function generateZerotrustData(input: {
       connections: (t.connections ?? []).length,
       routeCount: (rawRoutes as Array<{ tunnel_id?: string }>).filter((r) => r.tunnel_id === t.id).length,
     }));
-  const tunnelsHealthy = tunnelList.filter((t) => t.status === "healthy").length;
+  // Exact counts from result_info.total_count (getCloudflaredTunnelCounts) —
+  // the inventory list above is capped at 250 tunnels, which would silently
+  // under-report totals/healthy on any account with a larger fleet.
+  const tunnelsHealthy = tunnelCounts.healthy || tunnelList.filter((t) => t.status === "healthy").length;
+  const tunnelsTotalCount = tunnelCounts.total || tunnelList.length;
 
   // ── Access apps/policies ──────────────────────────────────────────────────
   const accessApps = rawApps.slice(0, POLICY_FETCH_CAP).map((app, i) => {
@@ -640,7 +759,7 @@ export async function generateZerotrustData(input: {
       evidence: "0 DLP profiles configured",
     },
     {
-      key: "cloudflare-tunnel", active: tunnelList.length === 0, priority: "low",
+      key: "cloudflare-tunnel", active: tunnelsTotalCount === 0, priority: "low",
       title: "Replace VPN with Cloudflare Tunnel",
       description: "No Cloudflare Tunnels configured. Replace your VPN with Tunnel + Access for zero-trust network access to internal applications.",
       benefit: "Eliminates VPN attack surface — no inbound firewall rules needed, connections are outbound-only",
@@ -697,18 +816,36 @@ export async function generateZerotrustData(input: {
       shadowItAppsDiscovered: shadowItObj.discoveredApps.length,
       warpEnrolledDevices: warpCount,
       warpOnlineDevices: warpOnlineDevices, warpOfflineDevices: warpOfflineDevices,
-      tunnelsHealthy, tunnelsTotal: tunnelList.length,
+      tunnelsHealthy, tunnelsTotal: tunnelsTotalCount,
       seatsTotal, seatsAccessTotal, seatsGatewayTotal, seatsActiveInPeriod, seatsNeverLoggedIn,
       gatewayBandwidthBytesSent: networkAnalyticsObj.bytesSent, gatewayBandwidthBytesRecvd: networkAnalyticsObj.bytesRecvd,
       gatewayRetransmittedBytes: networkAnalyticsObj.retransmittedBytes,
       casbFindingsCount,
       mcpServersCount, mcpPortalsCount, mcpServerLoginEvents,
+      // Dashboard analytics API additions (see cf-dashboard-analytics.ts)
+      warpAndServiceTokenLoginEvents: warpAndServiceTokenEvents,
+      gatewayDnsUniqueUsers: dnsAnalyticsSummary?.uniqueUserCount ?? 0,
+      gatewayDnsUniqueDevices: dnsAnalyticsSummary?.uniqueDeviceCount ?? 0,
+      gatewayHttpUniqueUsers: httpAnalyticsSummary?.uniqueUserCount ?? 0,
+      gatewayHttpUniqueApps: httpAnalyticsSummary?.uniqueAppCount ?? 0,
+      gatewayHttpBandwidthBytes: httpAnalyticsSummary?.bandwidthConsumedBytes ?? 0,
+      gatewayHttpUploadedBytes: httpAnalyticsSummary?.uploadedBytes ?? 0,
+      gatewayHttpDownloadedBytes: httpAnalyticsSummary?.downloadedBytes ?? 0,
+      gatewayHttpDlpMatchesTotal: httpAnalyticsSummary?.dlpProfileMatchesTotal ?? 0,
+      gatewayMcpDistinctUsers: httpAnalyticsSummary?.mcpDistinctUsers ?? 0,
+      gatewayNetworkBandwidthBytes: networkAnalyticsSummary?.bandwidthConsumedBytes ?? 0,
+      gatewayNslTotalBytes: nslTotalBytes ?? 0,
+      casbDlpFindingsCount: casbDlpFindings?.currentTotal ?? 0,
+      cdsScanMatchesTotal: cdsScanResults?.matchesTotal ?? 0,
     },
     // Access
     accessApps,
     accessPolicies,
     accessIdps: (idps as Array<{ id: string; name: string; type: string }>).map((i) => ({ id: i.id, name: i.name, type: i.type })),
-    accessAuthTimeSeries: authSeries,
+    accessAuthTimeSeries: accessLoginsSeries.length > 0
+      ? accessLoginsSeries.map((d: { date: string; allow: number; block: number }) => ({ date: d.date, allow: d.allow, block: d.block, mfa: 0 }))
+      : authSeries,
+    accessLoginsTopApps, accessLoginsTopUsers,
     accessTopApps: topApps,
     accessTopUsers: topUsers,
     accessTopBlockedUsers: (topUsers as Array<{ email: string; requests: number; blocked: number; country: string }>).filter((u) => u.blocked > 0).sort((a, b) => b.blocked - a.blocked).map((u) => ({ email: u.email, count: u.blocked, country: u.country })),
@@ -730,7 +867,7 @@ export async function generateZerotrustData(input: {
     // Gateway DNS
     gatewayDnsTimeSeries: dnsSeries,
     gatewayDnsResolverBreakdown: dnsBreakdown,
-    gatewayDnsTopBlockedDomains: dnsTopDoms,
+    gatewayDnsTopBlockedDomains: dnsTopBlockedMerged.length > 0 ? dnsTopBlockedMerged : dnsTopDoms,
     gatewayDnsTopAllowedDomains: dnsTopAllowed,
     gatewayDnsTopBlockedCategories: dnsCats,
     // Gateway HTTP
@@ -783,8 +920,9 @@ export async function generateZerotrustData(input: {
     // Tunnels
     tunnels: tunnelList,
     tunnelRoutes: (rawRoutes as Array<{ network: string; tunnel_id?: string; tunnel_name?: string; comment?: string }>).map((r) => ({ network: r.network, tunnelId: r.tunnel_id ?? "", tunnelName: r.tunnel_name ?? "", comment: r.comment })),
-    // DLP — real configuration only (see type/comment in types.ts for why
-    // match-count time series were removed rather than kept as fake stubs)
+    // DLP — configuration + real per-period match data (REST analytics API;
+    // GraphQL genuinely has no per-profile match dataset, but this REST
+    // endpoint does — see dlpProfileMatches/dlpActivitySummary below).
     dlpProfiles: (rawDlpProfs as Array<{ id: string; name: string; type: "custom"|"predefined" }>).map((p) => ({ id: p.id, name: p.name, type: p.type, matchCount: 0 })),
     // CASB
     casbFindingsBySeverity: Array.from(casbFindingsBySeverity.entries()).map(([severity, count]) => ({ severity, count })),
@@ -798,14 +936,27 @@ export async function generateZerotrustData(input: {
     gatewayDlpQuarantineTimeSeries: dlpQuarantineSeries as ZeroTrustData["gatewayDlpQuarantineTimeSeries"],
     configChanges,
     dexFleetStatus: dexFleetStatusMapped,
+    // Dashboard analytics API additions (see cf-dashboard-analytics.ts)
+    gatewayHttpTopBandwidthUsers: httpTopBandwidthUsers,
+    gatewayHttpTopCountries: httpTopCountries,
+    gatewayNslByOfframp: nslByOfframp,
+    gatewayNslTopUsers: nslTopUsers,
+    dlpActivitySummary: dlpActivity
+      ? { hitCount: dlpActivity.dlpHitCount, scanCount: dlpActivity.dlpScanCount, prevHitCount: dlpActivity.prevDlpHitCount, prevScanCount: dlpActivity.prevDlpScanCount }
+      : undefined,
+    dlpProfileMatches,
+    dlpTopWebsites,
     dataConfidence: {
       mfaChallenges: "No Cloudflare API or GraphQL dataset exposes MFA-challenge events for Access logins. This value is always 0 and does not mean MFA is unused — it means MFA usage is not independently measurable via API today.",
-      accessTopUsers: "Derived from the latest 1,000 Access authentication log rows (REST), then ranked. On high-volume accounts this is a recent sample, not the full period. See accessDistinctCounts for a higher-limit distinct-count cross-check.",
+      accessTopUsers: "Derived from the latest 1,000 Access authentication log rows (REST, WARP client session events excluded), then ranked. On high-volume accounts this is a recent sample, not the full period — see accessLoginsTopUsers for the dashboard-exact top-N over the full period, or accessDistinctCounts for a higher-limit distinct-count cross-check.",
       warpPostureRules: "Lists configured posture rules only. Per-device pass/fail evaluation results are not exposed by the standard REST API — Enterprise accounts can obtain this via Logpush (Device Posture Results dataset).",
-      dlpProfiles: "Lists configured DLP profiles only (no per-period match counts are exposed by GraphQL). See gatewayDlpQuarantineTimeSeries for a real, if indirect, HTTP-quarantine-action trend.",
       dexFleetStatus: "Live device telemetry from the last 60 minutes — NOT scoped to the report period (since/until). Use it as a right-now device-health snapshot alongside the historical WARP connection-status trend.",
       gatewayHttpTopBlockedUsers: "HTTP Gateway only — no equivalent per-user attribution is confirmed available on the DNS or Network (L4) Gateway datasets.",
       controlCoverage: "Unused-policy detection is DNS-only — no per-policy match dimension is confirmed available for HTTP or Network (L4) Gateway rules via GraphQL today.",
+      totalAuthEvents: "Real interactive Access login attempts (dashboard-exact, excludes WARP client session/reconnect events and service-token validations). See summary.warpAndServiceTokenLoginEvents for the excluded volume.",
+      seatsActiveInPeriod: accessUsersTotalCount > rawAccessUsers.length
+        ? `Computed over a sample of ${rawAccessUsers.length} of ${accessUsersTotalCount} total seats — seatsTotal itself is the exact total, but per-seat activity/never-logged-in figures are approximate on this large an account.`
+        : "Computed over all seats returned by the Access Users API.",
     },
     controlCoverage,
     errors: fetchErrors,

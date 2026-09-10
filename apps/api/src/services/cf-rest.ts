@@ -1654,11 +1654,23 @@ export interface CfWarpDevice {
   device_type?: string;
 }
 
-export async function getWarpDevices(token: string, accountId: string): Promise<CfWarpDevice[]> {
+/**
+ * Returns both a sample device list (bounded, used for the device inventory
+ * table + OS breakdown) and the REAL total enrolled-device count from
+ * `result_info.total_count` — confirmed live that `/devices` truncates to
+ * `per_page` (max 500) while `total_count` reports the true fleet size
+ * (e.g. a real account with 4,373 enrolled devices but only 500 returned
+ * per page). Previously only the truncated list length was used, silently
+ * under-reporting "enrolled devices" on any account with >500 devices.
+ */
+export async function getWarpDevices(
+  token: string, accountId: string
+): Promise<{ devices: CfWarpDevice[]; totalCount: number }> {
   try {
-    const res = await cfGet<CfWarpDevice[]>(token, `/accounts/${accountId}/devices?per_page=500`);
-    return res.ok && Array.isArray(res.data) ? res.data : [];
-  } catch { return []; }
+    const res = await cfGetPaged<CfWarpDevice[]>(token, `/accounts/${accountId}/devices?per_page=500`);
+    const devices = res.ok && Array.isArray(res.data) ? res.data : [];
+    return { devices, totalCount: res.totalCount ?? devices.length };
+  } catch { return { devices: [], totalCount: 0 }; }
 }
 
 // ─── WARP Posture Rules ───────────────────────────────────────────────────────
@@ -1691,9 +1703,31 @@ export interface CfTunnel {
 
 export async function getCloudflaredTunnels(token: string, accountId: string): Promise<CfTunnel[]> {
   try {
-    const res = await cfGet<CfTunnel[]>(token, `/accounts/${accountId}/cfd_tunnel?per_page=100&is_deleted=false`);
+    const res = await cfGet<CfTunnel[]>(token, `/accounts/${accountId}/cfd_tunnel?per_page=250&is_deleted=false`);
     return res.ok && Array.isArray(res.data) ? res.data : [];
   } catch { return []; }
+}
+
+/**
+ * Exact total/healthy tunnel counts via `result_info.total_count` on a
+ * `per_page=1` request — mirrors the dashboard's own tunnel-count calls
+ * (`/tunnels?per_page=1` and `&status=healthy`) instead of relying on the
+ * length of a possibly-truncated list (getCloudflaredTunnels above caps at
+ * 250 tunnels; this is exact regardless of fleet size).
+ */
+export async function getCloudflaredTunnelCounts(
+  token: string, accountId: string
+): Promise<{ total: number; healthy: number }> {
+  try {
+    const [totalRes, healthyRes] = await Promise.all([
+      cfGetPaged<CfTunnel[]>(token, `/accounts/${accountId}/cfd_tunnel?per_page=1&is_deleted=false`),
+      cfGetPaged<CfTunnel[]>(token, `/accounts/${accountId}/cfd_tunnel?per_page=1&is_deleted=false&status=healthy`),
+    ]);
+    return {
+      total: totalRes.ok ? (totalRes.totalCount ?? 0) : 0,
+      healthy: healthyRes.ok ? (healthyRes.totalCount ?? 0) : 0,
+    };
+  } catch { return { total: 0, healthy: 0 }; }
 }
 
 // ─── Tunnel Routes ────────────────────────────────────────────────────────────
@@ -1770,20 +1804,43 @@ export interface CfAccessUser {
   gateway_seat?: boolean;
 }
 
-export async function getAccessUsers(token: string, accountId: string): Promise<CfAccessUser[]> {
+/**
+ * Returns a sample of users (bounded, used to compute seat-flag/last-login
+ * aggregates) plus the REAL total seat count from `result_info.total_count`.
+ *
+ * Two bugs fixed here, both confirmed live on a real account (1,921 total
+ * access/gateway seats):
+ *   1. Missing `seat_type=any` — the dashboard's own seat-listing call uses
+ *      this param; without it this endpoint can silently omit users who
+ *      only hold a gateway seat (no access seat).
+ *   2. The old 1,000-user hard cap (5 pages × 200) meant `seatsTotal` was
+ *      computed as `distinct emails in the fetched sample` instead of the
+ *      real total — always wrong on any account with >1,000 seats.
+ * `seatsTotal` itself should always use the returned `totalCount` (exact);
+ * per-user aggregates (active-in-period, never-logged-in, access/gateway
+ * seat split) are computed from the sample and are only approximate on
+ * accounts whose true seat count exceeds the sample cap below.
+ */
+export async function getAccessUsers(
+  token: string, accountId: string
+): Promise<{ users: CfAccessUser[]; totalCount: number }> {
   try {
     const out: CfAccessUser[] = [];
     let page = 1;
-    // Cap at 1000 users (5 pages of 200) to bound cost on very large orgs.
+    let totalCount = 0;
+    // Cap at 5,000 users (5 pages of 1,000) to bound cost on very large orgs.
     while (page <= 5) {
-      const res = await cfGet<CfAccessUser[]>(token, `/accounts/${accountId}/access/users?per_page=200&page=${page}`);
+      const res = await cfGetPaged<CfAccessUser[]>(
+        token, `/accounts/${accountId}/access/users?seat_type=any&per_page=1000&page=${page}`
+      );
       const batch = res.ok && Array.isArray(res.data) ? res.data : [];
+      if (res.totalCount !== undefined) totalCount = res.totalCount;
       out.push(...batch);
-      if (batch.length < 200) break;
+      if (batch.length < 1000) break;
       page++;
     }
-    return out;
-  } catch { return []; }
+    return { users: out, totalCount: totalCount || out.length };
+  } catch { return { users: [], totalCount: 0 }; }
 }
 
 // ─── CASB Findings (Data Security Posture) ────────────────────────────────────

@@ -176,6 +176,7 @@ interface AccessLogEntry {
   created_at: string; user_email: string; country?: string;
   ip_address?: string;   // source IP of the authenticating user
   connection?: string;   // IdP/connection used to authenticate (e.g. "saml", "oidc", "onetimepin")
+  app_type?: string;     // "warp" | "biso" | "app_launcher" | "dash_sso" | "self_hosted" | "saas" | ...
 }
 
 /**
@@ -190,7 +191,22 @@ export async function fetchAccessLogs(token: string, accountId: string): Promise
   );
 }
 
+// Confirmed live on a real production account: the WARP client's system
+// "Warp Login App" (app_type "warp") generates a login-request-log entry on
+// every client reconnect/session-key-renewal — 980 of the latest 1,000 rows
+// on a real account were app_type "warp", drowning out genuine interactive
+// application logins (only 20 of 1,000 were real app logins in the same
+// sample). Filtering by `action !== "warp_enrollment"` alone is NOT enough —
+// most of the WARP noise has `action: "login"` too; the only reliable
+// signal is `app_type === "warp"`. All top-user/app/geo/IP/method
+// breakdowns derived from this REST log below now exclude these rows so
+// they reflect real application access, not WARP client session churn.
+function isWarpSystemLogin(log: AccessLogEntry): boolean {
+  return log.app_type === "warp";
+}
+
 function inRange(log: AccessLogEntry, sinceMs: number, untilMs: number): boolean {
+  if (isWarpSystemLogin(log)) return false;
   const ts = new Date(log.created_at).getTime();
   return ts >= sinceMs && ts <= untilMs;
 }

@@ -147,6 +147,48 @@ export interface ZeroTrustSummary {
   mcpServersCount?: number;
   mcpPortalsCount?: number;
   mcpServerLoginEvents?: number;
+
+  // ── Dashboard analytics API additions (real; see cf-dashboard-analytics.ts) ─
+  // `totalAuthEvents`/`blockedAuthEvents` above now source from
+  // access-logins/summary when available (real interactive login attempts —
+  // confirmed live that the GraphQL fallback counts WARP client session
+  // events too, a 300x inflation on a real account). This field surfaces
+  // that excluded noise rather than hiding it.
+  warpAndServiceTokenLoginEvents?: number;
+  // Gateway-wide unique users/devices (DNS analytics) — distinct from
+  // `uniqueUsers`/`uniqueApps` above, which are Access-login-derived. A
+  // real account can have far more Gateway (WARP/DNS) users than Access
+  // app users (e.g. 1,734 vs ~300) since DNS filtering covers all WARP
+  // client traffic, not just Access-gated applications.
+  gatewayDnsUniqueUsers?: number;
+  gatewayDnsUniqueDevices?: number;
+  gatewayHttpUniqueUsers?: number;
+  gatewayHttpUniqueApps?: number;
+  gatewayHttpBandwidthBytes?: number;
+  gatewayHttpUploadedBytes?: number;
+  gatewayHttpDownloadedBytes?: number;
+  // Real per-period DLP match count (HTTP inline DLP) — previously claimed
+  // as "not exposed by any API" (true for GraphQL; false for this REST
+  // analytics endpoint, confirmed live: 47.25M hits / 18.7M scans on a real
+  // account with active DLP policies).
+  gatewayHttpDlpMatchesTotal?: number;
+  gatewayMcpDistinctUsers?: number;
+  // Real account-wide L4 (Network) bandwidth from gateway-network/summary —
+  // a different dataset/scope than gatewayBandwidthBytesSent/Recvd above
+  // (gatewayL4DownstreamSessionsAdaptiveGroups), kept separate rather than
+  // merged since the two are not directly additive.
+  gatewayNetworkBandwidthBytes?: number;
+  // Real total bytes from the Network Session Log (NSL) dataset, split by
+  // egress path (WARP / Cloudflare Tunnel / Internet) elsewhere in this type.
+  gatewayNslTotalBytes?: number;
+  // Real-time CASB DLP finding count (REST /analytics/casb/findings/dlp) —
+  // distinct from `casbFindingsCount` above (REST /data-security/posture/
+  // findings, a configuration/posture-style finding list). Both are real;
+  // they measure different things.
+  casbDlpFindingsCount?: number;
+  // Cloud Data Security (CDS) at-rest SaaS scan match total — distinct from
+  // inline HTTP DLP above. 0 is an honest "not configured", not a stub.
+  cdsScanMatchesTotal?: number;
 }
 
 export interface AccessApp {
@@ -418,6 +460,33 @@ export interface ZeroTrustData {
   // caps, or known unsupported metrics) so "0" is never confused with "not
   // measured". Keyed by an informal section id, not a strict enum. ─────────
   dataConfidence?: Record<string, string>;
+
+  // ── Dashboard analytics API additions (real; see cf-dashboard-analytics.ts) ─
+  // Access — dashboard-exact top interactive-login apps/users (excludes
+  // WARP client session events, unlike the REST-log-derived accessTopApps/
+  // accessTopUsers above, which are now also filtered but over a smaller
+  // 1,000-row REST sample).
+  accessLoginsTopApps?: { appId: string; appName: string; attemptsTotal: number }[];
+  accessLoginsTopUsers?: { email: string; attemptsTotal: number }[];
+
+  // Gateway HTTP — real top bandwidth consumers and top request countries
+  // (no equivalent existed anywhere in this codebase before).
+  gatewayHttpTopBandwidthUsers?: { email: string; bandwidthConsumedBytes: number }[];
+  gatewayHttpTopCountries?: { country: string; requestsTotal: number }[];
+
+  // Network Session Log (NSL) — real bandwidth split by egress path (WARP /
+  // Cloudflare Tunnel / Internet) and top bandwidth consumers. A trust/
+  // adoption signal (how much traffic is actually going through Zero Trust
+  // egress paths vs. direct Internet) not available anywhere else.
+  gatewayNslByOfframp?: { offramp: string; bytesTotal: number }[];
+  gatewayNslTopUsers?: { email: string; bytesTotal: number }[];
+
+  // Real per-period DLP match data (REST /analytics/gateway/proxy/http) —
+  // replaces the prior "no per-period match counts are exposed by any API"
+  // claim, confirmed live to be false for this specific endpoint.
+  dlpActivitySummary?: { hitCount: number; scanCount: number; prevHitCount: number; prevScanCount: number };
+  dlpProfileMatches?: { profileName: string; hitCount: number }[];
+  dlpTopWebsites?: { host: string; hitCount: number }[];
 
   // ── Control Coverage & Effectiveness (real; derived from already-fetched
   // config + analytics data — no new external API calls) ───────────────────

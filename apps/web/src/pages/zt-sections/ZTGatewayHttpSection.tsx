@@ -1,7 +1,7 @@
 import { Globe } from "lucide-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar, Cell } from "recharts";
 import type { ZeroTrustData } from "../../types";
-import { formatNumber } from "../../utils/formatters";
+import { formatNumber, formatBytes } from "../../utils/formatters";
 import SectionHeader from "../../components/SectionHeader";
 
 const STATUS_BUCKET_COLORS: Record<string, string> = {
@@ -15,6 +15,8 @@ export default function ZTGatewayHttpSection({ data }: { data: ZeroTrustData }) 
   const cats      = data.gatewayHttpTopBlockedCategories;
   const statusCodes = data.gatewayHttpStatusCodes ?? [];
   const topBlockedUsers = data.gatewayHttpTopBlockedUsers ?? [];
+  const topBandwidthUsers = data.gatewayHttpTopBandwidthUsers ?? [];
+  const topCountries = data.gatewayHttpTopCountries ?? [];
   const s         = data.summary;
   if (series.length === 0 && topDoms.length === 0) return null;
 
@@ -34,6 +36,10 @@ export default function ZTGatewayHttpSection({ data }: { data: ZeroTrustData }) 
     { label: "RBI Rate",       value: `${rbiPct}%`,                        color: rbiPct > 0 ? "#F59E0B" : "#10B981" },
     ...(quarantined > 0 ? [{ label: "Quarantined (DLP)", value: formatNumber(quarantined), color: "#EF4444" }] : []),
     ...(mcpRequests > 0 ? [{ label: "MCP Requests", value: formatNumber(mcpRequests), color: "#8B5CF6" }] : []),
+    ...((s.gatewayHttpUniqueUsers ?? 0) > 0 ? [{ label: "Unique Users", value: formatNumber(s.gatewayHttpUniqueUsers!), color: "#10B981" }] : []),
+    ...((s.gatewayHttpUniqueApps ?? 0) > 0 ? [{ label: "Unique Apps", value: formatNumber(s.gatewayHttpUniqueApps!), color: "#0EA5E9" }] : []),
+    ...((s.gatewayHttpBandwidthBytes ?? 0) > 0 ? [{ label: "Bandwidth", value: formatBytes(s.gatewayHttpBandwidthBytes!), color: "#14B8A6" }] : []),
+    ...((s.gatewayHttpDlpMatchesTotal ?? 0) > 0 ? [{ label: "DLP Matches", value: formatNumber(s.gatewayHttpDlpMatchesTotal!), color: "#EF4444" }] : []),
   ];
 
   // Dynamic column count so an unfilled 3rd/4th grid slot never leaves an
@@ -181,6 +187,42 @@ export default function ZTGatewayHttpSection({ data }: { data: ZeroTrustData }) 
           </div>
         )}
       </div>
+
+      {/* Real top bandwidth consumers and top request countries — REST
+          analytics API (no equivalent existed anywhere in this codebase
+          before; complements the blocked-request view above with a usage/
+          adoption view). */}
+      {(topBandwidthUsers.length > 0 || topCountries.length > 0) && (
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+          {topBandwidthUsers.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-cf-navy mb-3">Top Users by Bandwidth</h3>
+              <div className="space-y-1.5">
+                {topBandwidthUsers.slice(0, 8).map((u) => (
+                  <div key={u.email} className="flex items-center justify-between text-xs">
+                    <span className="text-cf-gray-600 truncate font-mono pr-2">{u.email}</span>
+                    <span className="font-mono font-semibold text-cf-navy flex-shrink-0">{formatBytes(u.bandwidthConsumedBytes)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {topCountries.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-cf-navy mb-3">Top Countries by Requests</h3>
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={topCountries.slice(0,8)} layout="vertical" margin={{ top: 4, right: 16, bottom: 0, left: 30 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9"/>
+                  <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v) => v >= 1e6 ? `${(v/1e6).toFixed(1)}M` : v >= 1e3 ? `${(v/1e3).toFixed(0)}K` : String(v)}/>
+                  <YAxis type="category" dataKey="country" tick={{ fontSize: 10 }} width={26}/>
+                  <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v: number) => formatNumber(v)}/>
+                  <Bar dataKey="requestsTotal" radius={[0,4,4,0]}>{topCountries.slice(0,8).map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}</Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

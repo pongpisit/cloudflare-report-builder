@@ -12,11 +12,15 @@ export default function ZTAccessAuthSection({ data }: { data: ZeroTrustData }) {
   const totalAllow = series.reduce((s, d) => s + d.allow, 0);
   const totalBlock = series.reduce((s, d) => s + d.block, 0);
   const mfaNote = data.dataConfidence?.mfaChallenges;
+  const authNote = data.dataConfidence?.totalAuthEvents;
+  const warpEvents = data.summary.warpAndServiceTokenLoginEvents ?? 0;
+  const topApps = data.accessLoginsTopApps ?? [];
+  const topUsers = data.accessLoginsTopUsers ?? [];
 
   return (
     <section className="report-section">
       <SectionHeader icon={<Lock size={20}/>} title="Access — Authentication Events"
-        subtitle="Daily authentication activity — allowed vs. blocked requests" />
+        subtitle="Daily authentication activity — real interactive login attempts (WARP client session events and service-token validations excluded)" />
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
         {[
           { label: "Allowed", value: totalAllow, color: "#10B981", key: "totalAuthEvents" },
@@ -31,10 +35,54 @@ export default function ZTAccessAuthSection({ data }: { data: ZeroTrustData }) {
           </div>
         ))}
       </div>
+      {authNote && (
+        <div className="print:hidden flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-3">
+          <Info size={13} className="text-slate-400 flex-shrink-0 mt-0.5"/>
+          <p className="text-[11px] text-slate-500 leading-relaxed">{authNote}</p>
+        </div>
+      )}
+      {warpEvents > 0 && (
+        <div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-5">
+          <Info size={13} className="text-blue-400 flex-shrink-0 mt-0.5"/>
+          <p className="text-[11px] text-blue-700 leading-relaxed">
+            {formatNumber(warpEvents)} additional WARP client session / service-token login events occurred this period — excluded from the KPIs above since they measure device connectivity, not application access. See WARP — Device Connectivity for that trend.
+          </p>
+        </div>
+      )}
       {mfaNote && (
         <div className="print:hidden flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mb-5">
           <Info size={13} className="text-slate-400 flex-shrink-0 mt-0.5"/>
           <p className="text-[11px] text-slate-500 leading-relaxed">{mfaNote}</p>
+        </div>
+      )}
+      {(topApps.length > 0 || topUsers.length > 0) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+          {topApps.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-cf-navy mb-3">Top Applications by Login Attempts</h3>
+              <div className="space-y-1.5">
+                {topApps.slice(0, 8).map((a) => (
+                  <div key={a.appId} className="flex items-center justify-between text-xs">
+                    <span className="text-cf-gray-600 truncate">{a.appName}</span>
+                    <span className="font-mono font-semibold text-cf-navy">{formatNumber(a.attemptsTotal)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {topUsers.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-cf-navy mb-3">Top Users by Login Attempts</h3>
+              <div className="space-y-1.5">
+                {topUsers.slice(0, 8).map((u) => (
+                  <div key={u.email} className="flex items-center justify-between text-xs">
+                    <span className="text-cf-gray-600 truncate font-mono">{u.email}</span>
+                    <span className="font-mono font-semibold text-cf-navy">{formatNumber(u.attemptsTotal)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">

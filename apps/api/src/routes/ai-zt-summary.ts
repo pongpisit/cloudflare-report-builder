@@ -61,11 +61,17 @@ CRITICAL ACCURACY RULE: Never state or imply an MFA "challenge count" or "MFA us
   lines.push(`PERIOD: ${meta.since} to ${meta.until} (${days} days — always call it "${periodLabel}")`);
   lines.push(``);
   lines.push(`=== IDENTITY & ACCESS ===`);
-  lines.push(`Total auth events: ${fmt(summary.totalAuthEvents)}`);
+  lines.push(`Total interactive Access login attempts: ${fmt(summary.totalAuthEvents)} (dashboard-exact — excludes WARP client session/reconnect events and service-token validations)`);
   lines.push(`Auth success rate: ${summary.authSuccessRate}%`);
   lines.push(`Blocked auth: ${fmt(summary.blockedAuthEvents)}`);
+  if ((summary.warpAndServiceTokenLoginEvents ?? 0) > 0) {
+    lines.push(`ADDITIONAL CONTEXT (do not add to the auth-events total above): ${fmt(summary.warpAndServiceTokenLoginEvents!)} WARP client session/service-token login events also occurred this period — these are device connectivity events, not application access, and are already excluded from the auth-events number.`);
+  }
   lines.push(`NOTE: MFA-challenge event counts are not exposed by any Cloudflare API — do not mention an MFA challenge count. Only cite MFA POLICY coverage (below).`);
-  lines.push(`Unique users: ${fmt(summary.uniqueUsers)}, Unique apps protected: ${fmt(summary.uniqueApps)}`);
+  lines.push(`Unique Access-app users: ${fmt(summary.uniqueUsers)}, Unique apps protected: ${fmt(summary.uniqueApps)}`);
+  if ((summary.gatewayDnsUniqueUsers ?? 0) > 0 || (summary.gatewayHttpUniqueUsers ?? 0) > 0) {
+    lines.push(`Gateway-wide unique users (DNS/HTTP, broader than Access-app users — covers all WARP client traffic): ${fmt(Math.max(summary.gatewayDnsUniqueUsers ?? 0, summary.gatewayHttpUniqueUsers ?? 0))}, unique devices: ${fmt(summary.gatewayDnsUniqueDevices ?? 0)}`);
+  }
   if (zt.accessDistinctCounts) {
     lines.push(`Exact distinct counts (higher-limit sample of ${fmt(zt.accessDistinctCounts.sampleLimit)} rows): ${zt.accessDistinctCounts.uniqueUsers} users, ${zt.accessDistinctCounts.uniqueApps} apps`);
   }
@@ -115,10 +121,16 @@ CRITICAL ACCURACY RULE: Never state or imply an MFA "challenge count" or "MFA us
   lines.push(``);
   lines.push(`=== DLP & DATA SECURITY ===`);
   lines.push(`DLP profiles: ${zt.dlpProfiles.length}`);
-  lines.push(`CASB findings: ${fmt(summary.casbFindingsCount)}`);
+  lines.push(`CASB findings (posture): ${fmt(summary.casbFindingsCount)}`);
   if (zt.casbFindingsDetail && zt.casbFindingsDetail.length > 0) {
     const critHigh = zt.casbFindingsDetail.filter((f) => ["critical","high"].includes(f.severity.toLowerCase())).length;
     if (critHigh > 0) lines.push(`Of those, ${critHigh} are critical/high severity`);
+  }
+  if (zt.dlpActivitySummary && zt.dlpActivitySummary.hitCount > 0) {
+    lines.push(`REAL DLP matches this period: ${fmt(zt.dlpActivitySummary.hitCount)} hits across ${fmt(zt.dlpActivitySummary.scanCount)} scanned requests/files`);
+    if (zt.dlpProfileMatches && zt.dlpProfileMatches.length > 0) {
+      lines.push(`Top matching DLP profiles: ${zt.dlpProfileMatches.slice(0,3).map((p) => `${p.profileName} (${fmt(p.hitCount)})`).join(", ")}`);
+    }
   }
   const quarantineTotal = (zt.gatewayDlpQuarantineTimeSeries ?? []).reduce((s, d) => s + d.count, 0);
   if (quarantineTotal > 0) lines.push(`HTTP requests quarantined by DLP action this period: ${fmt(quarantineTotal)}`);

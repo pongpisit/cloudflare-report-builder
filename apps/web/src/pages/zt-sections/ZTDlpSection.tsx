@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertTriangle, Shield, Info, Clock } from "lucide-react";
+import { AlertTriangle, Shield, Clock } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import type { ZeroTrustData, CasbFindingItem, CasbFindingStatus } from "../../types";
 import { formatNumber } from "../../utils/formatters";
@@ -81,8 +81,10 @@ export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
   const casbBySeverity = data.casbFindingsBySeverity ?? [];
   const quarantineSeries = data.gatewayDlpQuarantineTimeSeries ?? [];
   const s = data.summary;
-  const dlpNote = data.dataConfidence?.dlpProfiles;
   const [register, setRegister] = useState<CasbFindingItem[]>(data.casbFindingRegister ?? []);
+  const dlpActivity = data.dlpActivitySummary;
+  const dlpProfileMatches = data.dlpProfileMatches ?? [];
+  const dlpTopWebsites = data.dlpTopWebsites ?? [];
 
   function handleChange(next: CasbFindingItem) {
     setRegister((prev) => prev.map((it) => (it.id === next.id ? next : it)));
@@ -90,7 +92,7 @@ export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
   const activeFindings  = register.filter((f) => f.clearedAt === null);
   const clearedFindings = register.filter((f) => f.clearedAt !== null);
 
-  if (profiles.length === 0 && (s.casbFindingsCount ?? 0) === 0) return (
+  if (profiles.length === 0 && (s.casbFindingsCount ?? 0) === 0 && !dlpActivity) return (
     <section className="report-section">
       <SectionHeader icon={<Shield size={20}/>} title="Data Loss Prevention (DLP) & CASB" subtitle="Sensitive data detection and SaaS security posture" />
       <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-center">
@@ -105,11 +107,15 @@ export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
     <section className="report-section">
       <SectionHeader icon={<Shield size={20}/>} title="Data Loss Prevention (DLP) & CASB"
         subtitle="DLP profile configuration and real CASB (Data Security Posture) findings" />
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+      <div className={`grid grid-cols-2 gap-4 mb-5 ${dlpActivity ? "sm:grid-cols-5" : "sm:grid-cols-3"}`}>
         {[
-          { label: "DLP Profiles",     value: profiles.length, color: "#8B5CF6" },
-          { label: "Predefined",       value: profiles.filter((p) => p.type === "predefined").length, color: "#3B82F6" },
+          { label: "DLP Profiles",     value: formatNumber(profiles.length), color: "#8B5CF6" },
+          { label: "Predefined",       value: formatNumber(profiles.filter((p) => p.type === "predefined").length), color: "#3B82F6" },
           { label: "CASB Findings",    value: formatNumber(s.casbFindingsCount ?? 0), color: (s.casbFindingsCount ?? 0) > 0 ? "#EF4444" : "#10B981" },
+          ...(dlpActivity ? [
+            { label: "DLP Matches (Real)", value: formatNumber(dlpActivity.hitCount), color: dlpActivity.hitCount > 0 ? "#EF4444" : "#10B981" },
+            { label: "Files/Requests Scanned", value: formatNumber(dlpActivity.scanCount), color: "#F59E0B" },
+          ] : []),
         ].map((k) => (
           <div key={k.label} className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
             <p className="text-[10px] font-semibold text-cf-gray-500 uppercase tracking-wide mb-1">{k.label}</p>
@@ -117,6 +123,51 @@ export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
           </div>
         ))}
       </div>
+
+      {/* Real per-period DLP match data — REST /analytics/gateway/proxy/http.
+          Previously this codebase claimed no per-period match counts were
+          exposed by any API; confirmed live that this specific REST
+          analytics endpoint does expose them (per-profile hit counts, total
+          hits/scans, and top DLP-affected websites). */}
+      {(dlpProfileMatches.length > 0 || dlpTopWebsites.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start mb-5">
+          {dlpProfileMatches.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-cf-navy mb-3">DLP Matches by Profile ({dlpProfileMatches.length})</h3>
+              <div className="space-y-2 max-h-72 overflow-y-auto">
+                {dlpProfileMatches.slice(0, 15).map((p) => {
+                  const maxVal = Math.max(...dlpProfileMatches.map((x) => x.hitCount), 1);
+                  const pct = Math.round((p.hitCount / maxVal) * 100);
+                  return (
+                    <div key={p.profileName}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-medium text-cf-navy truncate pr-2">{p.profileName}</span>
+                        <span className="font-mono text-red-600 flex-shrink-0">{formatNumber(p.hitCount)}</span>
+                      </div>
+                      <div className="h-1.5 bg-cf-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-red-500" style={{ width: `${pct}%` }}/>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {dlpTopWebsites.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-cf-navy mb-3">Top Websites by DLP Matches</h3>
+              <div className="space-y-1.5">
+                {dlpTopWebsites.slice(0, 8).map((w) => (
+                  <div key={w.host} className="flex items-center justify-between text-xs">
+                    <span className="text-cf-gray-600 truncate font-mono pr-2">{w.host}</span>
+                    <span className="font-mono font-semibold text-red-600 flex-shrink-0">{formatNumber(w.hitCount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       <div className={`grid gap-5 items-start ${casbBySeverity.length > 0 && profiles.length > 0 ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}>
         {casbBySeverity.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
@@ -225,12 +276,6 @@ export default function ZTDlpSection({ data }: { data: ZeroTrustData }) {
         </div>
       )}
 
-      {dlpNote && profiles.length > 0 && (
-        <div className="print:hidden flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 mt-5">
-          <Info size={13} className="text-slate-400 flex-shrink-0 mt-0.5"/>
-          <p className="text-[11px] text-slate-500 leading-relaxed">{dlpNote}</p>
-        </div>
-      )}
     </section>
   );
 }

@@ -32,7 +32,9 @@ export default function ZTOverviewSection({ data, isPoc = true }: { data: ZeroTr
     {
       label: "Auth Events",
       value: formatNumber(s.totalAuthEvents),
-      sub: `${s.authSuccessRate}% success rate`,
+      sub: (s.warpAndServiceTokenLoginEvents ?? 0) > 0
+        ? `${s.authSuccessRate}% success · +${fmtBig(s.warpAndServiceTokenLoginEvents!)} WARP/service-token sessions excluded`
+        : `${s.authSuccessRate}% success rate`,
       color: "#3B82F6",
       icon: <Lock size={18}/>,
       highlight: false,
@@ -40,8 +42,14 @@ export default function ZTOverviewSection({ data, isPoc = true }: { data: ZeroTr
     },
     {
       label: "Users Protected",
-      value: formatNumber(s.uniqueUsers),
-      sub: `across ${s.uniqueApps} apps`,
+      // Gateway (DNS/HTTP) unique users cover everyone routing traffic
+      // through Zero Trust — usually far larger than Access-app login
+      // users (e.g. WARP client users who never hit a gated app). Prefer
+      // it when available; fall back to the Access-derived count.
+      value: formatNumber(Math.max(s.gatewayDnsUniqueUsers ?? 0, s.gatewayHttpUniqueUsers ?? 0, s.uniqueUsers)),
+      sub: (s.gatewayDnsUniqueUsers ?? 0) > 0 || (s.gatewayHttpUniqueUsers ?? 0) > 0
+        ? "Gateway (DNS/HTTP) unique users"
+        : `across ${s.uniqueApps} apps`,
       color: "#10B981",
       icon: <Users size={18}/>,
       highlight: false,

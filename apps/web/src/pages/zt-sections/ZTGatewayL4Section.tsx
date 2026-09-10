@@ -19,10 +19,12 @@ export default function ZTGatewayL4Section({ data }: { data: ZeroTrustData }) {
   const tokenAuthStatus = data.gatewayTokenAuthStatusBreakdown ?? [];
   const topColos        = data.gatewayTopColos ?? [];
   const privateOrigins  = data.privateNetworkOrigins ?? [];
+  const nslByOfframp    = data.gatewayNslByOfframp ?? [];
+  const nslTopUsers     = data.gatewayNslTopUsers ?? [];
   const s         = data.summary;
   const bandwidthBytes = (s.gatewayBandwidthBytesSent ?? 0) + (s.gatewayBandwidthBytesRecvd ?? 0);
 
-  const hasData = series.length > 0 || blocked.length > 0 || protocols.length > 0 || bandwidthBytes > 0 || privateOrigins.length > 0;
+  const hasData = series.length > 0 || blocked.length > 0 || protocols.length > 0 || bandwidthBytes > 0 || privateOrigins.length > 0 || nslByOfframp.length > 0;
   if (!hasData) {
     return (
       <section className="report-section">
@@ -53,6 +55,7 @@ export default function ZTGatewayL4Section({ data }: { data: ZeroTrustData }) {
     { label: "Blocked IPs", value: String(blocked.length), color: "#F59E0B" },
     ...(bandwidthBytes > 0 ? [{ label: "Network Bandwidth", value: formatBytes(bandwidthBytes), color: "#14B8A6" }] : []),
     ...(retransmittedBytes > 0 ? [{ label: "Retransmitted", value: formatBytes(retransmittedBytes), color: retransmittedBytes / Math.max(bandwidthBytes, 1) > 0.05 ? "#EF4444" : "#9CA3AF" }] : []),
+    ...((s.gatewayNslTotalBytes ?? 0) > 0 ? [{ label: "Total Session Bytes", value: formatBytes(s.gatewayNslTotalBytes!), color: "#0EA5E9" }] : []),
   ];
 
   return (
@@ -138,6 +141,52 @@ export default function ZTGatewayL4Section({ data }: { data: ZeroTrustData }) {
           </div>
         )}
       </div>
+
+      {/* Network Session Log (NSL) — real bandwidth split by egress path
+          (WARP client / Cloudflare Tunnel / direct Internet) and top
+          bandwidth consumers. Mirrors the dashboard's own "Network sessions"
+          card — a trust/adoption signal: how much traffic actually flows
+          through Zero Trust egress paths vs. straight to the Internet. */}
+      {(nslByOfframp.length > 0 || nslTopUsers.length > 0) && (
+        <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+          {nslByOfframp.length > 0 && (() => {
+            const total = nslByOfframp.reduce((sum, o) => sum + o.bytesTotal, 0);
+            return (
+              <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+                <h3 className="text-sm font-semibold text-cf-navy mb-3">Traffic by Egress Path</h3>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={nslByOfframp} cx="50%" cy="45%" innerRadius={50} outerRadius={80}
+                      paddingAngle={2} dataKey="bytesTotal" nameKey="offramp" label={false} labelLine={false}>
+                      {nslByOfframp.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]}/>)}
+                    </Pie>
+                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v: number) => formatBytes(v)}/>
+                    <Legend iconType="circle" iconSize={10} wrapperStyle={{ fontSize: 10 }}
+                      formatter={(value: string) => {
+                        const o = nslByOfframp.find((x) => x.offramp === value);
+                        const pct = o && total > 0 ? Math.round((o.bytesTotal / total) * 100) : 0;
+                        return `${value} (${pct}%)`;
+                      }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            );
+          })()}
+          {nslTopUsers.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-cf-gray-200 p-4">
+              <h3 className="text-sm font-semibold text-cf-navy mb-3">Top Users by Bandwidth</h3>
+              <div className="space-y-1.5">
+                {nslTopUsers.slice(0, 8).map((u) => (
+                  <div key={u.email} className="flex items-center justify-between text-xs">
+                    <span className="text-cf-gray-600 truncate font-mono pr-2">{u.email}</span>
+                    <span className="font-mono font-semibold text-cf-navy flex-shrink-0">{formatBytes(u.bytesTotal)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Network Session Analytics — mirrors Cloudflare's own "Network session
           analytics" dashboard (session health + top colos). Only rendered

@@ -495,6 +495,22 @@ export interface ZeroTrustSummary {
   gatewayRetransmittedBytes: number;
   casbFindingsCount: number;
   mcpServersCount?: number; mcpPortalsCount?: number; mcpServerLoginEvents?: number;
+
+  // ── Dashboard analytics API additions (real; dashboard-exact numbers) ────
+  warpAndServiceTokenLoginEvents?: number;
+  gatewayDnsUniqueUsers?: number;
+  gatewayDnsUniqueDevices?: number;
+  gatewayHttpUniqueUsers?: number;
+  gatewayHttpUniqueApps?: number;
+  gatewayHttpBandwidthBytes?: number;
+  gatewayHttpUploadedBytes?: number;
+  gatewayHttpDownloadedBytes?: number;
+  gatewayHttpDlpMatchesTotal?: number;
+  gatewayMcpDistinctUsers?: number;
+  gatewayNetworkBandwidthBytes?: number;
+  gatewayNslTotalBytes?: number;
+  casbDlpFindingsCount?: number;
+  cdsScanMatchesTotal?: number;
 }
 
 export interface AccessApp { id: string; name: string; domain: string; type: string; sessionDuration: string; allowedIdps: string[]; policyCount: number; enabled: boolean }
@@ -608,6 +624,17 @@ export interface ZeroTrustData {
     deltas: Record<string, { previous: number; current: number; changePct: number | null }>;
   } | null;
   dataConfidence?: Record<string, string>;
+
+  // ── Dashboard analytics API additions (real; see cf-dashboard-analytics.ts) ─
+  accessLoginsTopApps?: { appId: string; appName: string; attemptsTotal: number }[];
+  accessLoginsTopUsers?: { email: string; attemptsTotal: number }[];
+  gatewayHttpTopBandwidthUsers?: { email: string; bandwidthConsumedBytes: number }[];
+  gatewayHttpTopCountries?: { country: string; requestsTotal: number }[];
+  gatewayNslByOfframp?: { offramp: string; bytesTotal: number }[];
+  gatewayNslTopUsers?: { email: string; bytesTotal: number }[];
+  dlpActivitySummary?: { hitCount: number; scanCount: number; prevHitCount: number; prevScanCount: number };
+  dlpProfileMatches?: { profileName: string; hitCount: number }[];
+  dlpTopWebsites?: { host: string; hitCount: number }[];
 
   // ── Control Coverage & Effectiveness (real; derived from already-fetched
   // config + analytics data) ────────────────────────────────────────────────
