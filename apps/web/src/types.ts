@@ -457,6 +457,10 @@ export interface ReportInput {
   accountId: string;
   days?: number;
   tzOffset?: number;
+  // "calendar_month" reports the previous FULL calendar month (its real
+  // 28-31 days) instead of a fixed rolling window ending now — `days` is
+  // ignored by the backend in that mode. Defaults to "rolling".
+  rangeMode?: ReportRangeMode;
   product?: "appsec" | "zero-trust";  // defaults to "appsec"
   // Optional branding (not sent to API)
   clientName?: string;
@@ -734,6 +738,11 @@ export interface AlertTrackingItem {
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly";
 export type ScheduleReportType = "appsec" | "zero-trust";
+// "rolling" = fixed N-day window ending now (existing behavior).
+// "calendar_month" = the previous full calendar month (28-31 days,
+// whichever the month actually has) — fixes monthly-frequency schedules
+// silently drifting off true month boundaries when using days=30.
+export type ReportRangeMode = "rolling" | "calendar_month";
 
 export interface ScheduleConfig {
   id: string;
@@ -758,6 +767,7 @@ export interface ScheduleConfig {
   lastRunAt: string | null;
   lastStatus: string | null;
   lastError: string | null;
+  rangeMode: ReportRangeMode;
 }
 
 /** Payload for create/update — everything the dashboard configures. */
@@ -768,6 +778,7 @@ export interface ScheduleInput {
   zoneName: string | null;
   days: number;
   tzOffset: number;
+  rangeMode: ReportRangeMode;
   frequency: ScheduleFrequency;
   dayOfWeek: number | null;
   dayOfMonth: number | null;

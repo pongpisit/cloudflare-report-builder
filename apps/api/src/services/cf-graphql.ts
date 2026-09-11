@@ -142,6 +142,74 @@ export function last30Days(days = 30, tzOffset = 0): {
   };
 }
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/**
+ * Returns { since, until, ... } for a full CALENDAR month, unlike
+ * `last30Days()` which is always a fixed-length rolling window. A rolling
+ * "30 days" window never lines up with an actual month (28/29/30/31 days) —
+ * a monthly-frequency scheduled report using days=30 silently drifts,
+ * either including part of the month before or missing the last day or two
+ * of a 31-day month. This computes the exact boundaries of the target
+ * month (defaults to the PREVIOUS month relative to "now") in the caller's
+ * local timezone, so "last month" always means the real last calendar
+ * month regardless of how many days it had.
+ *
+ * @param tzOffset  — same convention as last30Days(): browser
+ *                    getTimezoneOffset() in minutes.
+ * @param monthsAgo — how many whole months back from the current local
+ *                    month to target. 1 (default) = last month, 0 = the
+ *                    current month-to-date is NOT what this returns (use
+ *                    last30Days for partial/rolling ranges) — 0 here means
+ *                    the current calendar month's already-elapsed portion
+ *                    is NOT bounded specially, so callers needing "last
+ *                    month" should always pass the default.
+ */
+export function lastCalendarMonth(tzOffset = 0, monthsAgo = 1): {
+  since: string;        // YYYY-MM-DD — first day of the target month (local)
+  until: string;        // YYYY-MM-DD — last day of the target month (local)
+  untilQuery: string;   // YYYY-MM-DD — for date_lt queries = first day of the FOLLOWING month
+  sinceTs: string;      // ISO timestamp — exact UTC instant of the target month's start (local)
+  untilTs: string;      // ISO timestamp — exact UTC instant 1ms before the following month starts (local)
+  days: number;         // real day count for this specific month (28-31)
+  periodLabel: string;  // e.g. "August 2026"
+} {
+  const utcNow = Date.now();
+  // Same "local-wall-clock-as-UTC" trick as last30Days(): shifting by
+  // -tzOffset minutes lets getUTC*() read out local wall-clock components.
+  const localNow = new Date(utcNow - tzOffset * 60 * 1000);
+  const localYear  = localNow.getUTCFullYear();
+  const localMonth = localNow.getUTCMonth(); // 0-11
+
+  const targetIndex = localMonth - monthsAgo;
+  const targetYear  = localYear + Math.floor(targetIndex / 12);
+  const targetMonth = ((targetIndex % 12) + 12) % 12;
+
+  // Target month's local start/end-exclusive, expressed as "local wall
+  // clock stored as UTC ms" (mirrors localNow's representation above).
+  const localMonthStartMs = Date.UTC(targetYear, targetMonth, 1, 0, 0, 0, 0);
+  const localMonthEndExclusiveMs = Date.UTC(targetYear, targetMonth + 1, 1, 0, 0, 0, 0);
+  const days = Math.round((localMonthEndExclusiveMs - localMonthStartMs) / (24 * 60 * 60 * 1000));
+
+  // Convert back to real UTC instants — inverse of localNow's shift above
+  // (last30Days: localNow = utcNow - tzOffset*60000, so utcNow = localNow + tzOffset*60000).
+  const realStartUtcMs = localMonthStartMs + tzOffset * 60 * 1000;
+  const realEndExclusiveUtcMs = localMonthEndExclusiveMs + tzOffset * 60 * 1000;
+
+  return {
+    since: new Date(localMonthStartMs).toISOString().split("T")[0],
+    until: new Date(localMonthEndExclusiveMs - 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+    untilQuery: new Date(localMonthEndExclusiveMs).toISOString().split("T")[0],
+    sinceTs: new Date(realStartUtcMs).toISOString(),
+    untilTs: new Date(realEndExclusiveUtcMs - 1).toISOString(),
+    days,
+    periodLabel: `${MONTH_NAMES[targetMonth]} ${targetYear}`,
+  };
+}
+
 // ─── 1. HTTP Requests — Daily Time Series ─────────────────────────────────────
 /**
  * httpRequests1dGroups: total requests, cached, uncached, bytes, errors per day.

@@ -201,6 +201,7 @@ export async function runSchedule(
         accountId,
         days: row.days,
         tzOffset,
+        rangeMode: row.range_mode ?? "rolling",
       });
       const aiSummary = await generateAiSummary(env, appsec, isPoc).catch((e) => {
         console.warn("[scheduler] AI summary failed, sending without it:", String(e));
@@ -216,7 +217,7 @@ export async function runSchedule(
       rendered = renderAppsecEmail(appsec, params);
       subject = applySubjectTokens(row.subject, { zone: appsec.meta?.zoneName });
     } else {
-      const zt = await generateZerotrustData({ token, accountId, days: row.days, tzOffset, db: env.DB });
+      const zt = await generateZerotrustData({ token, accountId, days: row.days, tzOffset, rangeMode: row.range_mode ?? "rolling", db: env.DB });
       const aiSummary = await generateZtSummary(env, zt, isPoc).catch((e) => {
         console.warn("[scheduler] AI summary failed, sending without it:", String(e));
         return "";

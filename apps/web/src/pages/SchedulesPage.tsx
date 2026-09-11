@@ -11,7 +11,7 @@ import {
   Shield, Globe, Clock, Plus, Pencil, Trash2, History, Send, Loader2,
   AlertCircle, CheckCircle, X, Mail, Calendar, User, ArrowLeft, KeyRound, Settings,
 } from "lucide-react";
-import type { ScheduleConfig, ScheduleInput, ScheduleHistoryEntry, ZoneOption, ScheduleReportType, ScheduleFrequency } from "../types";
+import type { ScheduleConfig, ScheduleInput, ScheduleHistoryEntry, ZoneOption, ScheduleReportType, ScheduleFrequency, ReportRangeMode } from "../types";
 import {
   listSchedules, createSchedule, updateSchedule, deleteSchedule,
   sendScheduleNow, fetchScheduleHistory, fetchScheduleZones,
@@ -424,7 +424,7 @@ function ScheduleCard({ schedule: s, busy, onEdit, onDelete, onSendNow, onToggle
               {s.name}
             </h3>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#5d5e65" }}>
-              {describeSchedule(s)} · {s.days}-day report
+              {describeSchedule(s)} · {s.rangeMode === "calendar_month" ? "last calendar month" : `${s.days}-day`} report
               {s.reportType === "appsec" && s.zoneName ? ` · ${s.zoneName}` : ""}
             </p>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#5d5e65", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -503,6 +503,7 @@ function configToInput(s: ScheduleConfig, enabledOverride?: boolean): ScheduleIn
     zoneName: s.zoneName,
     days: s.days,
     tzOffset: s.tzOffset,
+    rangeMode: s.rangeMode,
     frequency: s.frequency,
     dayOfWeek: s.dayOfWeek,
     dayOfMonth: s.dayOfMonth,
@@ -533,6 +534,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
   const [zoneId, setZoneId] = useState(initial?.zoneId ?? "");
   const [zoneName, setZoneName] = useState(initial?.zoneName ?? "");
   const [days, setDays] = useState<number>(initial?.days ?? 30);
+  const [rangeMode, setRangeMode] = useState<ReportRangeMode>(initial?.rangeMode ?? "rolling");
   const [frequency, setFrequency] = useState<ScheduleFrequency>(initial?.frequency ?? "weekly");
   const [dayOfWeek, setDayOfWeek] = useState<number>(initial?.dayOfWeek ?? 1);
   const [dayOfMonth, setDayOfMonth] = useState<number>(initial?.dayOfMonth ?? 1);
@@ -588,6 +590,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       zoneName: reportType === "appsec" ? (selectedZone?.name ?? zoneName ?? null) : null,
       days,
       tzOffset,
+      rangeMode,
       frequency,
       dayOfWeek: frequency === "weekly" ? dayOfWeek : null,
       dayOfMonth: frequency === "monthly" ? dayOfMonth : null,
@@ -703,21 +706,43 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
           <label className="ar-input-label"><Calendar size={10} style={{ display: "inline", marginRight: 4 }} /> Report Timeframe</label>
           <div style={{ display: "flex", gap: 0 }}>
             {TIMEFRAME_OPTIONS.map((d) => (
-              <button key={d} type="button" onClick={() => setDays(d)}
+              <button key={d} type="button" onClick={() => { setDays(d); setRangeMode("rolling"); }}
                 style={{
                   flex: 1, padding: "13px 6px 11px",
                   fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
                   textTransform: "uppercase" as const, cursor: "pointer",
                   border: "1px solid",
-                  borderColor: days === d ? "#ba0816" : "#c4c4c4",
-                  backgroundColor: days === d ? "#ba0816" : "transparent",
-                  color: days === d ? "#ffffff" : "#5d5e65",
+                  borderColor: rangeMode === "rolling" && days === d ? "#ba0816" : "#c4c4c4",
+                  backgroundColor: rangeMode === "rolling" && days === d ? "#ba0816" : "transparent",
+                  color: rangeMode === "rolling" && days === d ? "#ffffff" : "#5d5e65",
                   marginRight: -1, transition: "all 0.15s", textAlign: "center" as const,
                 }}>
                 {d === 1 ? "1 Day" : `${d} Days`}
               </button>
             ))}
+            <button type="button" onClick={() => setRangeMode("calendar_month")}
+              style={{
+                flex: 1, padding: "13px 6px 11px",
+                fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                textTransform: "uppercase" as const, cursor: "pointer",
+                border: "1px solid",
+                borderColor: rangeMode === "calendar_month" ? "#ba0816" : "#c4c4c4",
+                backgroundColor: rangeMode === "calendar_month" ? "#ba0816" : "transparent",
+                color: rangeMode === "calendar_month" ? "#ffffff" : "#5d5e65",
+                transition: "all 0.15s", textAlign: "center" as const,
+              }}>
+              Last Month
+            </button>
           </div>
+          {rangeMode === "calendar_month" ? (
+            <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6 }}>
+              Reports the full previous calendar month (28-31 days, whichever the month has) instead of a fixed rolling window — recommended for monthly-frequency schedules.
+            </p>
+          ) : frequency === "monthly" ? (
+            <p style={{ fontSize: 11, color: "#b45309", marginTop: 6 }}>
+              A fixed {days}-day window won't line up with every calendar month (28-31 days) — consider "Last Month" above for a true month-to-month report.
+            </p>
+          ) : null}
         </div>
 
         {/* Frequency */}

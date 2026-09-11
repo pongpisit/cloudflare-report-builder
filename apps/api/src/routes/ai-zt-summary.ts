@@ -12,10 +12,20 @@ function fmt(n: number): string {
   return String(Math.round(n));
 }
 
+/** "a 7-Day" vs "an August 2026" — calendar-month labels can start with a
+ *  vowel (August, October, ...), unlike the fixed "N-Day" labels. */
+function articleFor(label: string): string {
+  return /^[aeiou]/i.test(label) ? "an" : "a";
+}
+
 function buildZtPrompt(zt: ZeroTrustData, isPoc: boolean): { system: string; user: string } {
   const { summary, meta, accessApps, accessIdps, gatewayPolicies, warpDevices, tunnels, recommendations } = zt;
   const days = meta.days;
-  const periodLabel = meta.periodLabel.toLowerCase();
+  // Only lowercase "N-Day"-style labels (existing behavior, reads as an
+  // adjective phrase: "the 7-day period"). A calendar-month label like
+  // "August 2026" is a proper period name and must stay capitalized —
+  // lowercasing it to "august 2026" would look like a typo, not a style choice.
+  const periodLabel = /-day$/i.test(meta.periodLabel) ? meta.periodLabel.toLowerCase() : meta.periodLabel;
   const highRecs = recommendations.filter((r) => r.priority === "high");
   const medRecs  = recommendations.filter((r) => r.priority === "medium");
 
@@ -44,7 +54,7 @@ ABSOLUTE FORMAT RULES:
 - Specific numbers required — no generic statements.
 - Never start a sentence with "I". Never label paragraphs.
 ${isPoc
-  ? `- This is a ${periodLabel} POC (${days} days: ${meta.since} to ${meta.until}). Always write "${periodLabel}".`
+  ? `- This is ${articleFor(periodLabel)} ${periodLabel} POC (${days} days: ${meta.since} to ${meta.until}). Always write "${periodLabel}".`
   : `- This report covers ${periodLabel} (${days} days: ${meta.since} to ${meta.until}). Always write "${periodLabel}". Never use the words "POC" or "Proof-of-Concept".`}
 
 PARAGRAPH PURPOSES (write in this order, no labels):

@@ -30,6 +30,12 @@ function pct(part: number, total: number): string {
   return `${Math.round((part / total) * 100)}%`;
 }
 
+/** "a 7-Day" vs "an August 2026" — calendar-month labels can start with a
+ *  vowel (August, October, ...), unlike the fixed "N-Day" labels. */
+function articleFor(label: string): string {
+  return /^[aeiou]/i.test(label) ? "an" : "a";
+}
+
 // ─── Source → human-readable label ───────────────────────────────────────────
 const SOURCE_LABEL: Record<string, string> = {
   firewallManaged:   "WAF Managed Rules",
@@ -53,8 +59,16 @@ function buildPrompt(appsec: AppSecData, isPoc: boolean): { system: string; user
   const cipherSuites = ap["cipherSuites"] as string[] | undefined ?? [];
 
   // ── Period ────────────────────────────────────────────────────────────────
-  const actualDays  = (meta as unknown as Record<string, number>)["days"] ?? 30;
-  const periodLabel = actualDays === 1 ? "1-day" : `${actualDays}-day`;
+  const actualDays = (meta as unknown as Record<string, number>)["days"] ?? 30;
+  // Prefer the backend-computed label — for a "Last Month" report (rangeMode
+  // calendar_month) this is a real calendar-month name like "August 2026",
+  // not a generic "31-day" phrase that would silently ignore the framing
+  // the user actually selected. Only lowercase the "N-Day" style labels
+  // (existing behavior, reads as an adjective phrase: "the 7-day period") —
+  // a month name is a proper noun and must stay capitalized.
+  const rawPeriodLabel = (meta as unknown as Record<string, string>)["periodLabel"]
+    ?? (actualDays === 1 ? "1-Day" : `${actualDays}-Day`);
+  const periodLabel = /-day$/i.test(rawPeriodLabel) ? rawPeriodLabel.toLowerCase() : rawPeriodLabel;
   const periodPhrase = `the ${periodLabel} evaluation period (${meta.since} to ${meta.until})`;
 
   // ── Traffic ───────────────────────────────────────────────────────────────
@@ -269,7 +283,7 @@ ABSOLUTE FORMAT RULES — violating any of these is a failure:
 - Professional, confident, C-suite language. Specific numbers required — no vague generalisations.
 - Never start a sentence with "I". Never refer to yourself.
 ${isPoc
-  ? `- This is a ${periodPhraseLabel} (${actualDays} days: ${meta.since} to ${meta.until}). Always write "${periodLabel}" — never "30-day" unless actualDays equals 30.`
+  ? `- This is ${articleFor(periodPhraseLabel)} ${periodPhraseLabel} (${actualDays} days: ${meta.since} to ${meta.until}). Always write "${periodLabel}" — never "30-day" unless actualDays equals 30.`
   : `- This report covers ${periodPhraseLabel} (${actualDays} days: ${meta.since} to ${meta.until}). Always write "${periodLabel}" — never "30-day" unless actualDays equals 30. Never use the words "POC", "Proof-of-Concept", or "proof of concept" anywhere in the output.`}
 
 PARAGRAPH PURPOSES (write in this order, NO labels):
@@ -408,7 +422,7 @@ ${paragraph5}`;
 
   lines.push(`=== REMINDER ===`);
   lines.push(isPoc
-    ? `This is a ${periodLabel} POC (${actualDays} days). Never write "30-day" unless that is the actual period. Always write "${periodLabel}".`
+    ? `This is ${articleFor(periodLabel)} ${periodLabel} POC (${actualDays} days). Never write "30-day" unless that is the actual period. Always write "${periodLabel}".`
     : `This report covers ${periodLabel} (${actualDays} days). Never write "30-day" unless that is the actual period. Always write "${periodLabel}". Never use the words "POC" or "Proof-of-Concept".`);
 
   return { system, user: lines.join("\n") };

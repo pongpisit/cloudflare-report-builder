@@ -6,10 +6,11 @@
  */
 
 import type { Context } from "hono";
-import type { Env } from "../types";
+import type { Env, ReportRangeMode } from "../types";
 import { fetchAppSecConfig, fetchEmailSecurity, fetchDnsRecordsEnriched, getCustomWafRules, type CfCertPack, type CfRuleset, type CfRateLimit } from "../services/cf-rest";
 import {
   last30Days,
+  lastCalendarMonth,
   fetchHttpRequestsTimeSeries,
   fetchHttpRequestsHourly,
   fetchHttpErrorTimeSeries,
@@ -114,9 +115,9 @@ import type { AppSecData, CertificateInfo, WafManagedRule, RateLimitRule } from 
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
-function validateInput(body: unknown): { token: string; zoneId: string; accountId: string; days: number; tzOffset: number } | null {
+function validateInput(body: unknown): { token: string; zoneId: string; accountId: string; days: number; tzOffset: number; rangeMode: ReportRangeMode } | null {
   if (!body || typeof body !== "object") return null;
-  const { token, zoneId, accountId, days, tzOffset } = body as Record<string, unknown>;
+  const { token, zoneId, accountId, days, tzOffset, rangeMode } = body as Record<string, unknown>;
   if (typeof token !== "string" || !token.trim()) return null;
   if (typeof zoneId !== "string" || !/^[a-f0-9]{32}$/.test(zoneId)) return null;
   if (typeof accountId !== "string" || !/^[a-f0-9]{32}$/.test(accountId)) return null;
@@ -127,7 +128,8 @@ function validateInput(body: unknown): { token: string; zoneId: string; accountI
   // e.g. GMT+7 = -420, GMT-5 = 300. Clamp to ±840 (±14 hours)
   const parsedTz = typeof tzOffset === "number" ? tzOffset : parseInt(String(tzOffset ?? "0"), 10);
   const validTz = isNaN(parsedTz) ? 0 : Math.max(-840, Math.min(840, parsedTz));
-  return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz };
+  const validRangeMode: ReportRangeMode = rangeMode === "calendar_month" ? "calendar_month" : "rolling";
+  return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: validRangeMode };
 }
 
 // ─── Transform Helpers ────────────────────────────────────────────────────────
@@ -230,15 +232,25 @@ export async function generateAppsecData(input: {
   accountId: string;
   days: number;
   tzOffset: number;
+  /** "calendar_month" reports the previous FULL calendar month (28-31 days,
+   *  whichever the month actually has) instead of a fixed rolling window —
+   *  `days` above is ignored in that mode. Defaults to "rolling". */
+  rangeMode?: ReportRangeMode;
 }): Promise<AppSecData> {
-  const { token, zoneId, accountId, days, tzOffset } = input;
-  const {
-    since,           // YYYY-MM-DD display start date (local)
-    until,           // YYYY-MM-DD display end date = today (local)
-    untilQuery,      // YYYY-MM-DD for date_lt in httpRequests1dGroups (daily datasets)
-    sinceTs,         // ISO timestamp for datetime_geq in adaptive/hourly queries
-    untilTs,         // ISO timestamp for datetime_leq — exact "now"
-  } = last30Days(days, tzOffset);
+  const { token, zoneId, accountId, tzOffset, rangeMode = "rolling" } = input;
+
+  // "calendar_month" reports the previous FULL calendar month (its real
+  // 28-31 days) instead of a fixed rolling window ending now — `input.days`
+  // is ignored in that mode. `calendarPeriodLabel` (e.g. "August 2026")
+  // overrides the default "N-Day" periodLabel further down when set.
+  const dateRange = rangeMode === "calendar_month" ? lastCalendarMonth(tzOffset) : last30Days(input.days, tzOffset);
+  const since      = dateRange.since;       // YYYY-MM-DD display start date (local)
+  const until      = dateRange.until;       // YYYY-MM-DD display end date — today, or last day of the target month
+  const untilQuery = dateRange.untilQuery;  // YYYY-MM-DD for date_lt in httpRequests1dGroups (daily datasets)
+  const sinceTs    = dateRange.sinceTs;     // ISO timestamp for datetime_geq in adaptive/hourly queries
+  const untilTs    = dateRange.untilTs;     // ISO timestamp for datetime_leq — exact "now", or end of the target month
+  const days       = rangeMode === "calendar_month" ? (dateRange as ReturnType<typeof lastCalendarMonth>).days : input.days;
+  const calendarPeriodLabel = rangeMode === "calendar_month" ? (dateRange as ReturnType<typeof lastCalendarMonth>).periodLabel : undefined;
 
   // Adaptive group date filters — use exact UTC timestamps truncated to date.
   // sinceTs = "now minus N days" as ISO timestamp → convert to YYYY-MM-DD
@@ -1873,7 +1885,7 @@ export async function generateAppsecData(input: {
       until,
       generatedAt: new Date().toISOString(),
       days,
-      periodLabel: days === 1 ? "1-Day" : `${days}-Day`,
+      periodLabel: calendarPeriodLabel ?? (days === 1 ? "1-Day" : `${days}-Day`),
     },
     summary: {
       totalRequests,

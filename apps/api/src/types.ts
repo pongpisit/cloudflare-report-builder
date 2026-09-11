@@ -20,6 +20,12 @@ export interface Env {
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly";
 export type ScheduleReportType = "appsec" | "zero-trust";
+// "rolling" = fixed N-day window ending now (existing behavior).
+// "calendar_month" = the previous full calendar month (28-31 days,
+// whichever the month actually has) — see lastCalendarMonth() in
+// cf-graphql.ts. Fixes monthly-frequency schedules silently drifting off
+// true month boundaries when using a fixed 30-day rolling window.
+export type ReportRangeMode = "rolling" | "calendar_month";
 
 /** Raw D1 row from the `schedules` table */
 export interface ScheduleRow {
@@ -45,6 +51,7 @@ export interface ScheduleRow {
   last_run_at: string | null;
   last_status: string | null;
   last_error: string | null;
+  range_mode: ReportRangeMode;
 }
 
 /** Schedule as returned to the dashboard (recipients parsed, booleans coerced) */
@@ -71,6 +78,7 @@ export interface ScheduleConfig {
   lastRunAt: string | null;
   lastStatus: string | null;
   lastError: string | null;
+  rangeMode: ReportRangeMode;
 }
 
 export interface SendHistoryRow {

@@ -14,7 +14,7 @@
  */
 
 import type { Context } from "hono";
-import type { Env, ScheduleRow, ScheduleConfig, ScheduleReportType, ScheduleFrequency } from "../types";
+import type { Env, ScheduleRow, ScheduleConfig, ScheduleReportType, ScheduleFrequency, ReportRangeMode } from "../types";
 import { runSchedule } from "../scheduler";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30];
@@ -53,6 +53,7 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     lastRunAt: row.last_run_at,
     lastStatus: row.last_status,
     lastError: row.last_error,
+    rangeMode: row.range_mode ?? "rolling",
   };
 }
 
@@ -75,6 +76,7 @@ interface ValidatedSchedule {
   isPoc: number;
   clientName: string | null;
   enabled: number;
+  rangeMode: ReportRangeMode;
 }
 
 function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: string } {
@@ -101,9 +103,21 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
     }
   }
 
-  const days = b.days;
-  if (typeof days !== "number" || !ALLOWED_DAYS.includes(days))
-    return { error: `days must be one of ${ALLOWED_DAYS.join(", ")}` };
+  // rangeMode "calendar_month" ignores `days` for the actual date-range math
+  // (see lastCalendarMonth() in cf-graphql.ts) — a fixed 30-day rolling
+  // window never lines up with a real month's 28-31 days. `days` is still
+  // stored (a nominal 30) purely so existing UI/history that displays it
+  // has something reasonable to show before a report is actually generated.
+  const rangeMode: ReportRangeMode = b.rangeMode === "calendar_month" ? "calendar_month" : "rolling";
+
+  let days: number;
+  if (rangeMode === "calendar_month") {
+    days = 30;
+  } else {
+    if (typeof b.days !== "number" || !ALLOWED_DAYS.includes(b.days))
+      return { error: `days must be one of ${ALLOWED_DAYS.join(", ")}` };
+    days = b.days;
+  }
 
   let tzOffset = 0;
   if (b.tzOffset !== undefined) {
@@ -164,7 +178,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
     data: {
       name, reportType, zoneId, zoneName, days, tzOffset, frequency,
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
-      isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0,
+      isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
     },
   };
 }
@@ -196,14 +210,14 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
     `INSERT INTO schedules
        (id, name, report_type, zone_id, zone_name, days, tz_offset, frequency,
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
-        is_poc, client_name, enabled, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        is_poc, client_name, enabled, created_at, updated_at, range_mode)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
       data.tzOffset, data.frequency, data.dayOfWeek, data.dayOfMonth,
       data.sendHourUtc, data.recipients, data.subject, data.message,
-      data.isPoc, data.clientName, data.enabled, now, now
+      data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode
     )
     .run();
 
@@ -231,14 +245,14 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        name = ?, report_type = ?, zone_id = ?, zone_name = ?, days = ?, tz_offset = ?,
        frequency = ?, day_of_week = ?, day_of_month = ?, send_hour_utc = ?,
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
-       enabled = ?, updated_at = ?
+       enabled = ?, updated_at = ?, range_mode = ?
      WHERE id = ?`
   )
     .bind(
       data.name, data.reportType, data.zoneId, data.zoneName, data.days, data.tzOffset,
       data.frequency, data.dayOfWeek, data.dayOfMonth, data.sendHourUtc,
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
-      data.enabled, now, id
+      data.enabled, now, data.rangeMode, id
     )
     .run();
 

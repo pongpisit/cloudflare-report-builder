@@ -6,7 +6,7 @@
  */
 
 import type { Context } from "hono";
-import type { Env, ZeroTrustData } from "../types";
+import type { Env, ZeroTrustData, ReportRangeMode } from "../types";
 import {
   getAccessApps, getAccessPolicies, getAccessIdps,
   getGatewayRules, getGatewayLocations, getGatewayCategories, buildGatewayCategoryMap,
@@ -37,7 +37,7 @@ import {
   fetchGenAiUsage,
 } from "../services/cf-zerotrust-graphql";
 
-import { last30Days as l30 } from "../services/cf-graphql";
+import { last30Days as l30, lastCalendarMonth } from "../services/cf-graphql";
 import { getBaseline, saveSnapshot } from "../services/zt-snapshots";
 import { syncRemediationFindings, getRemediationRegister, type RemediationFinding } from "../services/zt-remediation";
 import { syncCasbFindings, getCasbFindingRegister, type CasbFindingInput } from "../services/zt-casb-tracking";
@@ -70,8 +70,8 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
   try { body = await c.req.json(); }
   catch { return c.json({ error: "Invalid JSON body" }, 400); }
 
-  const { token, accountId, days: rawDays, tzOffset = 0 } =
-    body as { token?: string; accountId?: string; days?: number; tzOffset?: number };
+  const { token, accountId, days: rawDays, tzOffset = 0, rangeMode: rawRangeMode } =
+    body as { token?: string; accountId?: string; days?: number; tzOffset?: number; rangeMode?: string };
 
   if (!token || typeof token !== "string" || token.length < 10)
     return c.json({ error: "Missing or invalid token" }, 400);
@@ -80,8 +80,9 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
 
   const days = ALLOWED_DAYS.includes(rawDays as typeof ALLOWED_DAYS[number])
     ? (rawDays as typeof ALLOWED_DAYS[number]) : 30;
+  const rangeMode: ReportRangeMode = rawRangeMode === "calendar_month" ? "calendar_month" : "rolling";
 
-  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset, db: c.env.DB });
+  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset, rangeMode, db: c.env.DB });
   return c.json({ ok: true, zerotrust });
 }
 
@@ -93,25 +94,41 @@ export async function generateZerotrustData(input: {
   accountId: string;
   days: number;
   tzOffset: number;
+  /** "calendar_month" reports the previous FULL calendar month (its real
+   *  28-31 days) instead of a fixed rolling window ending now — `days`
+   *  above is ignored in that mode. Defaults to "rolling". */
+  rangeMode?: ReportRangeMode;
   /** D1 binding — optional. Powers baseline/period-over-period comparison;
    *  report generation works fully without it, just without deltas. */
   db?: D1Database;
 }): Promise<ZeroTrustData> {
-  const { token, accountId, days, tzOffset, db } = input;
+  const { token, accountId, tzOffset, rangeMode = "rolling", db } = input;
 
-  const { since, until, sinceTs, untilTs } = l30(days, tzOffset);
+  const dateRange = rangeMode === "calendar_month" ? lastCalendarMonth(tzOffset) : l30(input.days, tzOffset);
+  const { since, until, sinceTs, untilTs } = dateRange;
+  const days = rangeMode === "calendar_month" ? (dateRange as ReturnType<typeof lastCalendarMonth>).days : input.days;
+  const calendarPeriodLabel = rangeMode === "calendar_month" ? (dateRange as ReturnType<typeof lastCalendarMonth>).periodLabel : undefined;
 
   // Use ISO timestamps for Gateway GraphQL queries.
-  const adSince = sinceTs;  // e.g. "2026-03-02T10:36:42Z" = now - 30d
-  const adUntil = untilTs;  // e.g. "2026-04-01T10:36:42Z" = now
+  const adSince = sinceTs;  // e.g. "2026-03-02T10:36:42Z" = now - 30d, or a fixed past month-start for calendar_month
+  const adUntil = untilTs;  // e.g. "2026-04-01T10:36:42Z" = now, or the target month's last instant
 
   // IMPORTANT: gatewayResolverQueriesAdaptiveGroups does NOT support datetime_lt.
-  // It only supports datetime_gt (open-ended upper bound = "now at Cloudflare").
-  // The 30-day quota means "now - 30 days → now" must stay within 4w2d.
-  // Since adSince = now - 30d, by the time Cloudflare processes the query the
-  // effective range is 30d + network latency → quota exceeded → silent empty response.
-  // Fix: add 2h buffer so DNS range is ~29d 22h (safely under the limit).
-  const gwAdSince = new Date(new Date(adSince).getTime() + 2 * 60 * 60 * 1000).toISOString();
+  // It only supports datetime_gt (open-ended upper bound = "now at Cloudflare"),
+  // AND Cloudflare enforces its ~4-week retention quota based on (now - since)
+  // regardless of any upper bound — confirmed live: a query for a date range
+  // that's fully in the past (e.g. "last calendar month" requested well into
+  // the following month) can still be rejected purely because `since` itself
+  // is more than ~4w3d before the real "now". For rolling mode this is
+  // avoided by the +2h buffer below; for calendar_month mode once the target
+  // month is more than ~4 weeks behind "now", these DNS-breakdown GraphQL
+  // queries below will fail and fail SOFT (existing try/catch → empty
+  // arrays) — the headline DNS totals remain correct regardless, since
+  // those source from the dashboard analytics API (no such quota; verified
+  // live), not this GraphQL dataset. See dataConfidence.gatewayDnsBreakdown.
+  const gwAdSince = rangeMode === "calendar_month"
+    ? adSince
+    : new Date(new Date(adSince).getTime() + 2 * 60 * 60 * 1000).toISOString();
 
   const fetchErrors: Record<string, string> = {};
   const sg = <T>(r: PromiseSettledResult<T>, key: string, fallback: T): T =>
@@ -802,7 +819,7 @@ export async function generateZerotrustData(input: {
       accountId, accountName,
       since, until,
       generatedAt: new Date().toISOString(),
-      days, periodLabel: days === 1 ? "1-Day" : `${days}-Day`,
+      days, periodLabel: calendarPeriodLabel ?? (days === 1 ? "1-Day" : `${days}-Day`),
     },
     summary: {
       totalAuthEvents: totalAuth, authSuccessRate: successRate,
@@ -957,6 +974,9 @@ export async function generateZerotrustData(input: {
       seatsActiveInPeriod: accessUsersTotalCount > rawAccessUsers.length
         ? `Computed over a sample of ${rawAccessUsers.length} of ${accessUsersTotalCount} total seats — seatsTotal itself is the exact total, but per-seat activity/never-logged-in figures are approximate on this large an account.`
         : "Computed over all seats returned by the Access Users API.",
+      ...(rangeMode === "calendar_month" ? {
+        gatewayDnsBreakdown: "This is a calendar-month report. DNS totals (queries/blocked) come from Cloudflare's analytics API and are always accurate for the full month. However, the DNS breakdown widgets below (top blocked/allowed domains, category breakdown, resolver-decision mix, daily trend) use a GraphQL dataset that Cloudflare limits to roughly the last 4 weeks regardless of the requested date range — if this report is generated more than ~4 weeks after the target month ended, those breakdowns may be empty. This is a genuine Cloudflare API retention limit, not a bug.",
+      } : {}),
     },
     controlCoverage,
     errors: fetchErrors,

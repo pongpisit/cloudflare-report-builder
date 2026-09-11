@@ -7,7 +7,7 @@ import {
   Shield, Key, Building, AlertCircle, Eye, EyeOff,
   Loader2, Globe, ChevronDown, CheckCircle, Upload, User, Users, Calendar, Clock,
 } from "lucide-react";
-import type { ReportInput, ZoneOption } from "../types";
+import type { ReportInput, ZoneOption, ReportRangeMode } from "../types";
 import { fetchZones } from "../services/api";
 
 interface Props {
@@ -71,6 +71,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
   const [fetchingZones, setFetchingZones] = useState(false);
   const [zoneError, setZoneError]         = useState("");
   const [days, setDays]                   = useState<number>(30);
+  const [rangeMode, setRangeMode]         = useState<ReportRangeMode>("rolling");
   const [clientName, setClientName]       = useState("");
   const [partnerName, setPartnerName]     = useState("");
   const [clientLogo, setClientLogo]       = useState<string>("");
@@ -120,6 +121,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
       zoneId: product === "zero-trust" ? "" : selectedZoneId,
       accountId: accountId.trim().toLowerCase(),
       days, tzOffset: new Date().getTimezoneOffset(),
+      rangeMode,
       product,
       clientName:  clientName.trim()  || undefined,
       partnerName: partnerName.trim() || undefined,
@@ -374,22 +376,41 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                   </label>
                   <div style={{ display: "flex", gap: 0 }}>
                     {TIMEFRAME_OPTIONS.map((opt) => (
-                      <button key={opt.days} type="button" onClick={() => setDays(opt.days)}
+                      <button key={opt.days} type="button" onClick={() => { setDays(opt.days); setRangeMode("rolling"); }}
                         style={{
                           flex: 1, padding: "13px 8px 11px",
                           fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
                           textTransform: "uppercase" as const, cursor: "pointer",
                           border: "1px solid",
-                          borderColor: days === opt.days ? "#ba0816" : "#c4c4c4",
-                          backgroundColor: days === opt.days ? "#ba0816" : "transparent",
-                          color: days === opt.days ? "#ffffff" : "#5d5e65",
+                          borderColor: rangeMode === "rolling" && days === opt.days ? "#ba0816" : "#c4c4c4",
+                          backgroundColor: rangeMode === "rolling" && days === opt.days ? "#ba0816" : "transparent",
+                          color: rangeMode === "rolling" && days === opt.days ? "#ffffff" : "#5d5e65",
                           marginRight: -1, transition: "all 0.15s",
                           textAlign: "center" as const,
                         }}>
                         {opt.label}
                       </button>
                     ))}
+                    <button type="button" onClick={() => setRangeMode("calendar_month")}
+                      style={{
+                        flex: 1, padding: "13px 8px 11px",
+                        fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                        textTransform: "uppercase" as const, cursor: "pointer",
+                        border: "1px solid",
+                        borderColor: rangeMode === "calendar_month" ? "#ba0816" : "#c4c4c4",
+                        backgroundColor: rangeMode === "calendar_month" ? "#ba0816" : "transparent",
+                        color: rangeMode === "calendar_month" ? "#ffffff" : "#5d5e65",
+                        transition: "all 0.15s",
+                        textAlign: "center" as const,
+                      }}>
+                      Last Month
+                    </button>
                   </div>
+                  {rangeMode === "calendar_month" && (
+                    <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6 }}>
+                      Reports the full previous calendar month (e.g. all of August, whether it has 28, 29, 30, or 31 days) instead of a fixed rolling window.
+                    </p>
+                  )}
                 </div>
               )}
 
