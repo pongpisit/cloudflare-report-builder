@@ -30,6 +30,24 @@ export function pct(num: number, den: number): string {
   return `${Math.round((num / den) * 100)}%`;
 }
 
+/**
+ * Formats a rate/percentage for DISPLAY, without rounding small-but-real
+ * values down to a misleading "0%". `Math.round()` alone turns anything
+ * under 0.5% into "0%" — on a high-volume Gateway account, "3.5K blocked
+ * of 171M inspected" (0.002%) genuinely IS non-zero and worth showing, not
+ * indistinguishable from "0 blocked". Precision scales with magnitude so
+ * normal-sized rates (e.g. 12%) still render as clean integers.
+ */
+export function formatRate(num: number, den: number): string {
+  if (!den || den <= 0) return "0%";
+  const value = (num / den) * 100;
+  if (value <= 0) return "0%";
+  if (value < 0.01) return "<0.01%";
+  if (value < 1) return `${value.toFixed(2)}%`;
+  if (value < 10) return `${value.toFixed(1)}%`;
+  return `${Math.round(value)}%`;
+}
+
 export function daysLabel(days: number): string {
   if (days < 0) return "Expired";
   if (days === 0) return "Expires today";

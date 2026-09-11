@@ -1,6 +1,6 @@
 import { Globe } from "lucide-react";
 import type { ZeroTrustData } from "../../types";
-import { formatNumber } from "../../utils/formatters";
+import { formatNumber, formatRate } from "../../utils/formatters";
 import SectionHeader from "../../components/SectionHeader";
 import WorldMap from "../../components/charts/WorldMap";
 
@@ -35,14 +35,14 @@ export default function ZTAccessGeoSection({ data }: { data: ZeroTrustData }) {
               </thead>
               <tbody className="divide-y divide-cf-gray-100">
                 {geo.slice(0, 20).map((g, i) => {
-                  const blockPct = g.requests > 0 ? Math.round((g.blocked / g.requests) * 100) : 0;
+                  const blockPct = g.requests > 0 ? (g.blocked / g.requests) * 100 : 0;
                   return (
                     <tr key={g.country} className={i % 2 === 0 ? "bg-white" : "bg-cf-gray-50/40"}>
                       <td className="px-4 py-2 font-medium text-cf-navy text-[11px]">{g.country}</td>
                       <td className="px-4 py-2 text-right font-mono text-[11px] text-cf-gray-700">{formatNumber(g.requests)}</td>
                       <td className="px-4 py-2 text-right font-mono text-[11px] text-red-600">{formatNumber(g.blocked)}</td>
                       <td className="px-4 py-2 text-right font-mono text-[11px]">
-                        <span className={blockPct > 20 ? "text-red-600 font-bold" : "text-cf-gray-500"}>{blockPct}%</span>
+                        <span className={blockPct > 20 ? "text-red-600 font-bold" : "text-cf-gray-500"}>{formatRate(g.blocked, g.requests)}</span>
                       </td>
                     </tr>
                   );

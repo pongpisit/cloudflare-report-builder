@@ -1,7 +1,7 @@
 import { Globe } from "lucide-react";
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, BarChart, Bar, Cell } from "recharts";
 import type { ZeroTrustData } from "../../types";
-import { formatNumber, formatBytes } from "../../utils/formatters";
+import { formatNumber, formatBytes, formatRate } from "../../utils/formatters";
 import SectionHeader from "../../components/SectionHeader";
 
 const STATUS_BUCKET_COLORS: Record<string, string> = {
@@ -24,16 +24,20 @@ export default function ZTGatewayHttpSection({ data }: { data: ZeroTrustData }) 
   const blocked     = s.gatewayHttpBlocked ?? 0;
   const quarantined = s.httpQuarantinedRequests ?? 0;
   const mcpRequests = s.gatewayMcpHttpRequests ?? 0;
-  const rbiPct  = s.gatewayHttpRequests > 0 ? Math.round((rbi     / s.gatewayHttpRequests) * 100) : 0;
-  const blkPct  = s.gatewayHttpRequests > 0 ? Math.round((blocked / s.gatewayHttpRequests) * 100) : 0;
+  // Raw (unrounded) percentages for color-threshold logic only — the
+  // displayed value uses formatRate() so a real but small rate (e.g.
+  // 3.5K blocked of 171M inspected = 0.002%) never misleadingly shows as
+  // "0%" the way Math.round() to an integer would.
+  const rbiPct  = s.gatewayHttpRequests > 0 ? (rbi     / s.gatewayHttpRequests) * 100 : 0;
+  const blkPct  = s.gatewayHttpRequests > 0 ? (blocked / s.gatewayHttpRequests) * 100 : 0;
   const COLORS  = ["#EF4444","#F59E0B","#8B5CF6","#3B82F6","#10B981","#F97316","#6B7280","#EC4899"];
 
   const kpis = [
     { label: "HTTP Inspected", value: formatNumber(s.gatewayHttpRequests), color: "#3B82F6" },
     { label: "HTTP Blocked",   value: formatNumber(blocked),               color: "#EF4444" },
-    { label: "Block Rate",     value: `${blkPct}%`,                        color: blkPct > 5 ? "#EF4444" : "#10B981" },
+    { label: "Block Rate",     value: formatRate(blocked, s.gatewayHttpRequests), color: blkPct > 5 ? "#EF4444" : "#10B981" },
     { label: "RBI Sessions",   value: formatNumber(rbi),                   color: "#F59E0B" },
-    { label: "RBI Rate",       value: `${rbiPct}%`,                        color: rbiPct > 0 ? "#F59E0B" : "#10B981" },
+    { label: "RBI Rate",       value: formatRate(rbi, s.gatewayHttpRequests),     color: rbiPct > 0 ? "#F59E0B" : "#10B981" },
     ...(quarantined > 0 ? [{ label: "Quarantined (DLP)", value: formatNumber(quarantined), color: "#EF4444" }] : []),
     ...(mcpRequests > 0 ? [{ label: "MCP Requests", value: formatNumber(mcpRequests), color: "#8B5CF6" }] : []),
     ...((s.gatewayHttpUniqueUsers ?? 0) > 0 ? [{ label: "Unique Users", value: formatNumber(s.gatewayHttpUniqueUsers!), color: "#10B981" }] : []),

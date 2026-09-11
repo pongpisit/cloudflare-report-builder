@@ -4,7 +4,7 @@ import {
   PieChart, Pie, Cell, Legend, BarChart, Bar,
 } from "recharts";
 import type { ZeroTrustData } from "../../types";
-import { formatNumber, formatBytes } from "../../utils/formatters";
+import { formatNumber, formatBytes, formatRate } from "../../utils/formatters";
 import SectionHeader from "../../components/SectionHeader";
 
 const COLORS = ["#3B82F6","#EF4444","#10B981","#F59E0B","#8B5CF6","#F97316","#6B7280","#EC4899"];
@@ -39,7 +39,9 @@ export default function ZTGatewayL4Section({ data }: { data: ZeroTrustData }) {
 
   const totalL4  = s.gatewayL4Sessions ?? 0;
   const totalBlk = s.gatewayL4Blocked  ?? 0;
-  const blkPct   = totalL4 > 0 ? Math.round((totalBlk / totalL4) * 100) : 0;
+  // Raw (unrounded) — see formatRate() for why the displayed value isn't
+  // simply Math.round()'d to an integer.
+  const blkPct   = totalL4 > 0 ? (totalBlk / totalL4) * 100 : 0;
   const retransmittedBytes = s.gatewayRetransmittedBytes ?? 0;
 
   // NOTE: bandwidth comes from a separate GraphQL dataset
@@ -51,7 +53,7 @@ export default function ZTGatewayL4Section({ data }: { data: ZeroTrustData }) {
   const kpis = [
     { label: "L4 Sessions", value: formatNumber(totalL4),  color: "#3B82F6" },
     { label: "Blocked",     value: formatNumber(totalBlk), color: "#EF4444" },
-    { label: "Block Rate",  value: `${blkPct}%`,           color: blkPct > 5 ? "#EF4444" : "#10B981" },
+    { label: "Block Rate",  value: formatRate(totalBlk, totalL4), color: blkPct > 5 ? "#EF4444" : "#10B981" },
     { label: "Blocked IPs", value: String(blocked.length), color: "#F59E0B" },
     ...(bandwidthBytes > 0 ? [{ label: "Network Bandwidth", value: formatBytes(bandwidthBytes), color: "#14B8A6" }] : []),
     ...(retransmittedBytes > 0 ? [{ label: "Retransmitted", value: formatBytes(retransmittedBytes), color: retransmittedBytes / Math.max(bandwidthBytes, 1) > 0.05 ? "#EF4444" : "#9CA3AF" }] : []),
