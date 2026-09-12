@@ -12,7 +12,36 @@ database to manage beyond Cloudflare's own D1/R2.
 > Built for Cloudflare partners, SEs, and customers who want a Proof-of-Concept
 > or recurring security assessment report generated from *real* Cloudflare
 > data — not a mock-up. Every metric in every report traces back to a live
-> GraphQL Analytics or REST API call.
+> GraphQL Analytics, REST, or analytics API call.
+
+**At a glance:** ~$5/month to run (the Workers Paid subscription — see
+[Cost](#cost)), under a cent of marginal cost per report, ~30 seconds to
+generate a report, and no infrastructure to operate.
+
+---
+
+## Table of contents
+
+- [What it does](#what-it-does)
+- [What you need](#what-you-need) — prerequisites, and why Workers Paid is required
+- [Components](#components) — what actually gets deployed
+- [Cost](#cost) — measured usage against current Cloudflare pricing
+- [Quick start](#quick-start--deploy-to-cloudflare)
+- [Manual deployment](#manual-deployment)
+- [How the build works](#how-the-build-works)
+- [Local development](#local-development)
+- [Configuration reference](#configuration-reference)
+- [Cloudflare API token permissions](#cloudflare-api-token-permissions)
+- [Security](#security)
+- [Performance and platform limits](#performance-and-platform-limits)
+- [Scheduled email reports](#scheduled-email-reports)
+- [AI models](#ai-models)
+- [API reference](#api-reference)
+- [Data sources and honesty guarantees](#data-sources-and-honesty-guarantees)
+- [Project structure](#project-structure)
+- [Testing](#testing)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ---
 
@@ -37,42 +66,162 @@ generate:
 - An **AI executive summary** (Workers AI) for both report types, with
   distinct wording for a "Proof-of-Concept" pitch vs. a neutral recurring
   "Assessment" report.
-- Optional **scheduled email delivery** (daily/weekly/monthly) of either
-  report type via Cloudflare Email Sending, with a full run history.
+- **Finding lifecycle tracking** (D1-backed) — remediation register, CASB
+  finding register, and alert investigation register carry status, owner, age
+  and occurrence count across report runs, and auto-resolve when the
+  underlying condition clears.
+- Optional **scheduled email delivery** (daily/weekly/monthly, or the exact
+  previous calendar month) of either report type via Cloudflare Email
+  Sending, with a full run history.
 - An **audit archive** of every generated report (R2), listable and
   re-viewable later.
 
-**No mock data, ever.** Every chart is backed by a real Cloudflare GraphQL
-Analytics dataset or REST endpoint (documented inline in the source next to
-every fetcher). Where a metric genuinely can't be sourced from a real
-Cloudflare API, the report shows an honest empty state instead of a
-fabricated number — see the extensive comments throughout `apps/api/src/services/`.
+**No mock data, ever.** See
+[Data sources and honesty guarantees](#data-sources-and-honesty-guarantees).
 
 ---
 
-## Architecture
+## What you need
+
+### Prerequisites
+
+| Requirement | Version / detail | Why |
+|---|---|---|
+| **Node.js** | 18 or later (20 LTS+ recommended) | Vite 5 and Wrangler 4 both require Node 18+ |
+| **npm** | 8+ (npm workspaces) | The repo is a two-workspace monorepo (`apps/api`, `apps/web`) |
+| **Cloudflare account** | **Workers Paid ($5/mo minimum)** | Required — see [below](#why-workers-paid-is-required) |
+| **Wrangler** | Installed automatically as a devDependency | No global install needed; all commands use `npx wrangler` |
+| **Cloudflare API token** | Read-only, scoped — see [token permissions](#cloudflare-api-token-permissions) | Supplies the report data. You paste it in the UI per report; it is never stored |
+| **A sending domain** | Only for scheduled email reports | Must be onboarded to Cloudflare Email Sending |
+
+Everything else (the D1 database, R2 bucket, Workers AI binding, cron
+trigger) is provisioned by the deploy — you do not need to install or operate
+a database, queue, or server.
+
+### Why Workers Paid is required
+
+This is not an upsell — the app genuinely cannot run on the Workers Free
+plan. Three independent hard limits are exceeded, all measured or verified
+against [Cloudflare's published limits](https://developers.cloudflare.com/workers/platform/limits/):
+
+| Limit | Workers Free | This app needs | Source |
+|---|---|---|---|
+| **Subrequests per invocation** | 50 | **~75–120** Cloudflare API calls per report | Code: 18 config + up to 50 Access-policy + 48 analytics calls (Zero Trust); 71+ (AppSec) |
+| **CPU time per invocation** | 10 ms | **154 ms** measured for one full Zero Trust report | Measured via `wrangler tail` (see [Performance](#performance-and-platform-limits)) |
+| **Workers AI model access** | Some models are Paid-only | Primary summary model `@cf/zai-org/glm-5.3-flash` is on Cloudflare's paid-billing list | [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/) |
+
+Additionally, **Email Sending to arbitrary recipients requires Workers Paid**
+(sending to verified destination addresses in your own account is free on any
+plan), so scheduled email reports need it too.
+
+The Workers Paid plan is a flat **$5/month minimum for the whole account**,
+and — as the [Cost](#cost) section shows with measured numbers — realistic
+usage of this app fits inside the included allowances, so $5/month is
+typically the entire bill.
+
+---
+
+## Components
+
+One `wrangler deploy` produces a single Worker that owns everything below.
+There is no separate server, container, or VM.
+
+| Component | Binding | What it does | Required? |
+|---|---|---|---|
+| **Worker** (Hono) | — | All report generation, API routes, cron entrypoint. Entry: `apps/api/src/index.ts` | Yes |
+| **Static Assets** | `[assets]` | Serves the built React SPA (`apps/web/dist`) from the same origin as the API — one URL, no CORS | Yes |
+| **D1** (SQLite) | `DB` | Schedule config, send history, backend settings, KPI snapshots, and the remediation / CASB / alert registers — 7 tables | Yes (created by deploy) |
+| **R2** | `AUDIT_BUCKET` | Audit archive of rendered report HTML | Optional — only the archive feature needs it |
+| **Workers AI** | `AI` | Executive summaries (3-model fallback chain) | Optional — reports render without summaries |
+| **Email Sending** | `EMAIL` | Delivers scheduled report digests | Optional — only for scheduled emails |
+| **Cron Trigger** | `0 * * * *` | Hourly due-check for scheduled reports | Optional — harmless if unused |
+
+### Architecture
 
 ```
-                    ┌─────────────────────────────────────────┐
+                    ┌──────────────────────────────────────────┐
                     │   Cloudflare Worker (Hono)               │
    User's browser   │   apps/api/src/index.ts                  │
   ───────────────── │                                          │
   GET  /            │   [assets] → serves apps/web/dist (SPA)  │
   GET  /api/*  ──────►  REST + GraphQL fetchers → Cloudflare API│
-  GET  /health       │   D1 (schedules/settings)  R2 (audit)   │
+  GET  /health      │   D1 (schedules/registers)  R2 (audit)   │
                     │   Workers AI (executive summary)         │
                     │   Cron (hourly) → scheduled email digest │
-                    └─────────────────────────────────────────┘
+                    └──────────────────────────────────────────┘
 ```
 
-By default the **same Worker serves both the API and the built frontend**
-(via [Workers static assets](https://developers.cloudflare.com/workers/static-assets/)) —
-one deploy, one URL, no CORS to configure. A separate-Pages-project topology
-is also supported; see [Alternative: separate Pages frontend](#alternative-separate-pages-frontend).
+`run_worker_first = ["/api/*", "/health"]` means those paths always execute
+the Worker; every other path is served as a static asset first, falling back
+to `index.html` for SPA routing. A separate-Pages-project topology is also
+supported — see [Alternative: separate Pages frontend](#alternative-separate-pages-frontend).
 
-**Stack:** Hono (API), React + Vite + Tailwind + Recharts (frontend), D1
-(schedule config + history), R2 (audit archive), Workers AI (summaries),
-Cloudflare Email Sending (scheduled digests), cron triggers.
+**Stack:** Hono (API), React 18 + Vite 5 + Tailwind 3 + Recharts + D3
+(frontend), TypeScript throughout.
+
+---
+
+## Cost
+
+Cloudflare pricing verified against the official docs (Workers, Workers AI,
+D1, R2, and Email Service pricing pages) as of the last README update.
+**Always confirm current rates** — Cloudflare pricing changes, and the
+figures below are estimates, not a quote.
+
+### Measured resource usage
+
+These are real measurements from this app, not estimates:
+
+| Metric | Measured value | How |
+|---|---|---|
+| Worker CPU time per report | **154 ms** | `wrangler tail` on a full Zero Trust report against a large production account |
+| Worker wall-clock time per report | **~29 s** | Same run — the Worker is I/O-bound waiting on ~100 Cloudflare API calls |
+| Cloudflare API calls per report | **~75–120** | Counted in code (`Promise.allSettled` fan-out) |
+| Report JSON payload | **~167 KB** | Same run |
+| AI summary, CPU time | **9 ms** | Effectively all wall-time is waiting on Workers AI |
+| AI summary, wall time | **~10 s (typical) – 113 s (worst case)** | Worst case measured: both reasoning models exhausted their token budget and the third fallback produced the summary |
+| Archived report in R2 | **~2.8 MB** median | Median of 37 real archived objects |
+
+### Per-unit rates and included allowances
+
+| Component | Included (Workers Paid) | Rate above included | What this app consumes |
+|---|---|---|---|
+| **Workers subscription** | — | **$5.00 / month** (account minimum) | Flat |
+| Workers requests | 10 M / month | $0.30 / million | 1 request per report |
+| Workers CPU time | 30 M CPU-ms / month | $0.02 / million CPU-ms | 154 ms per report → **~195,000 reports/month** fit in the included CPU |
+| Static asset requests | Unlimited, free | — | The whole frontend |
+| **Workers AI** | 10,000 Neurons / **day** | $0.011 / 1,000 Neurons | ~170 Neurons per summary (best case), ~700 (worst case, all 3 models) |
+| **D1** | 5 GB storage, 25 B rows read, 50 M rows written / month | $0.75/GB-mo, $0.001/M read, $1.00/M written | Kilobytes; a handful of rows per report |
+| **R2** | 10 GB-month, 1 M Class A, 10 M Class B ops | $0.015/GB-mo, $4.50/M Class A, $0.36/M Class B | ~2.8 MB per archived report → **~3,600 archived reports** fit in the free tier |
+| **Email Sending** | 3,000 outbound emails / month | $0.35 / 1,000 emails | 1 email per scheduled recipient |
+
+### Marginal cost per report
+
+| Line item | Cost |
+|---|---|
+| Worker CPU (154 ms × $0.02/M ms) | $0.000003 |
+| AI executive summary | $0.002 (best case) – $0.008 (worst case, 3 models) |
+| R2 archive (2.8 MB, per month stored) | $0.00004 |
+| **Total** | **well under $0.01 per report** |
+
+### Realistic monthly scenarios
+
+| Scenario | Reports/month | Estimated bill |
+|---|---|---|
+| **Solo SE / partner** — 20 interactive reports, 4 scheduled emails, all archived | 24 | **$5.00** — everything inside included allowances |
+| **Active team** — 200 reports, 50 scheduled emails, all archived | 200 | **$5.00** — ~7 reports/day × ~700 Neurons stays under the 10,000/day AI allowance, so still just the subscription |
+| **Heavy automation** — 1,000 reports/month, all with AI summaries | 1,000 | **~$9.50** — ~33 reports/day exceeds the daily AI allowance; ~406,000 billable Neurons/month ≈ $4.46. Workers CPU (154,000 ms), R2 (2.8 GB) and email all remain inside included limits |
+
+**The practical takeaway:** the Workers Paid subscription is the bill. Usage
+is close to a rounding error at any volume a human actually reviews reports
+at. The one dimension that scales is Workers AI — and because the free
+allowance resets *daily* (10,000 Neurons/day ≈ 14 worst-case or 59 best-case
+summaries per day), steady usage often stays free.
+
+**Not included above:** your Cloudflare *plan* costs. The reports read data
+from products you already pay for (a zone plan, Cloudflare One seats,
+Enterprise add-ons like API Shield or Page Shield). This tool adds no
+licensing cost to those — it only reads their analytics.
 
 ---
 
@@ -96,8 +245,7 @@ cron job runs with nobody in the browser to supply a token interactively.
 #    The dashboard's Settings page can also set/rotate this without a redeploy.
 npx wrangler secret put CF_API_TOKEN
 
-# 2. Set the account the scheduled reports are generated from, and onboard a
-#    sending domain for Cloudflare Email Sending.
+# 2. Onboard a sending domain for Cloudflare Email Sending.
 npx wrangler email sending enable yourdomain.com
 ```
 
@@ -117,7 +265,7 @@ Access-authenticated user's email for you once Access is in front.
 
 ---
 
-## Manual deployment (alternative to the button)
+## Manual deployment
 
 ```bash
 git clone https://github.com/<you>/cloudflare-report-builder.git
@@ -139,50 +287,162 @@ resources without ever committing their IDs to git.
 
 ---
 
+## How the build works
+
+There are two independent build products: the **frontend bundle** (built by
+Vite, ahead of time) and the **Worker bundle** (built by Wrangler at deploy
+time). Understanding the order matters, because the Worker serves the
+frontend's output directory as static assets — so the frontend must be built
+*first*.
+
+### 1. Frontend build — `npm run build`
+
+Runs `npm run build --workspace=apps/web`, which is `tsc -b && vite build`:
+
+1. `tsc -b` type-checks `apps/web` using project references (fails the build
+   on any type error — there is no `noEmitOnError` escape hatch).
+2. `vite build` bundles React + Tailwind into `apps/web/dist`, with manual
+   vendor chunk splitting configured in `apps/web/vite.config.ts`
+   (`vendor-react`, `vendor-recharts`, `vendor-icons`, `vendor-d3`) so the
+   large charting libraries cache separately from app code.
+
+Typical output (~2 MB total, ~550 KB gzipped):
+
+```
+dist/index.html                       0.99 kB │ gzip:   0.46 kB
+dist/assets/index-*.css              43.39 kB │ gzip:   8.25 kB
+dist/assets/vendor-d3-*.js            8.24 kB │ gzip:   2.84 kB
+dist/assets/vendor-icons-*.js        39.76 kB │ gzip:   9.12 kB
+dist/assets/vendor-recharts-*.js    559.77 kB │ gzip: 156.13 kB
+dist/assets/index-*.js            1,348.52 kB │ gzip: 376.61 kB
+```
+
+Vite warns that the main chunk exceeds 600 kB. That is expected and
+accepted: a report page legitimately mounts dozens of chart sections, and
+this is an internal reporting tool where a one-time ~380 kB gzipped download
+is a better trade than the complexity of lazy-loading every section.
+
+### 2. D1 migrations
+
+`npx wrangler d1 migrations apply DB --remote` applies anything in
+`migrations/` not yet recorded in the database's migration table. Migrations
+are additive and safe to re-run (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE
+ADD COLUMN` with defaults):
+
+| Migration | Adds |
+|---|---|
+| `0001_init.sql` | `schedules`, `send_history` |
+| `0002_settings.sql` | `settings` (backend token + account, dashboard-managed) |
+| `0003_zt_snapshots.sql` | `zt_report_snapshots` (period-over-period KPI baselines) |
+| `0004_zt_remediation.sql` | `zt_remediation_items` (finding lifecycle) |
+| `0005_zt_casb_findings.sql` | `zt_casb_findings` (CASB finding lifecycle) |
+| `0006_zt_alert_tracking.sql` | `zt_alert_tracking` (alert investigation register) |
+| `0007_schedule_range_mode.sql` | `schedules.range_mode` (rolling vs. calendar month) |
+
+### 3. Worker build and deploy
+
+`npx wrangler deploy` bundles `apps/api/src/index.ts` with esbuild (no
+separate build step or config needed) and uploads it together with
+`apps/web/dist` as static assets. Current bundle size and startup time:
+
+```
+Total Upload: 509.20 KiB / gzip: 108.68 KiB
+Worker Startup Time: 13 ms
+```
+
+Both are far inside the platform limits (64 MiB uncompressed bundle, 1 s
+startup).
+
+### Putting it together
+
+`npm run deploy` → `scripts/deploy.sh` runs all three steps in order:
+
+```bash
+npm run build                                          # 1. frontend → apps/web/dist
+npx wrangler d1 migrations apply DB --remote --config …  # 2. schema
+npx wrangler deploy --config …                          # 3. worker + assets
+```
+
+To inspect the Worker bundle without deploying:
+
+```bash
+npx wrangler deploy --dry-run --outdir /tmp/out
+```
+
+### Type checking
+
+```bash
+npm run typecheck    # apps/api (tsc --noEmit) + apps/web (tsc -b)
+npm run cf-typegen   # regenerate worker-configuration.d.ts after editing wrangler.toml
+```
+
+`worker-configuration.d.ts` is the generated ambient `Env` type (bindings,
+vars, secrets). Regenerate it whenever you add or rename a binding, or
+TypeScript will not know about it.
+
+---
+
 ## Local development
 
 ```bash
 npm install
 
-# Terminal 1 — Worker API + assets (uses wrangler.local.toml if present)
+# Terminal 1 — Worker API (uses wrangler.toml)
 npm run dev:api          # wrangler dev, http://localhost:8787
 
 # Terminal 2 — Vite dev server with hot reload (proxies /api → :8787)
 npm run dev:web          # http://localhost:5173
 ```
 
-Regenerate `worker-configuration.d.ts` (ambient `Env` types) after editing
-`wrangler.toml`:
+Develop against `http://localhost:5173` — Vite proxies `/api` to the Worker
+on port 8787 (configured in `apps/web/vite.config.ts`), so the frontend and
+API behave as same-origin exactly like production.
 
-```bash
-npm run cf-typegen
-```
+Notes:
+
+- `npm run dev:api` is plain `wrangler dev` and therefore reads
+  **`wrangler.toml`**, not `wrangler.local.toml`. Only `scripts/deploy.sh`
+  prefers the local override. To develop against your own provisioned
+  resources, run `npx wrangler dev --config wrangler.local.toml`.
+- Workers AI and Email Sending bindings call the real remote services even in
+  local dev; D1 and R2 default to local emulation unless you pass `--remote`.
+- To serve the built SPA from `wrangler dev` (instead of Vite), run
+  `npm run build` first so `apps/web/dist` exists.
 
 ---
 
-## Security
+## Configuration reference
 
-- **Interactive reports**: your API token is sent once per report-generation
-  request, held only in memory for that request, and never written to D1,
-  R2, or logs. Nothing is stored server-side unless you explicitly click
-  "Save to Audit Archive" (which stores the *rendered report HTML*, not the
-  token).
-- **Scheduled reports**: the token used by the cron job is either a Worker
-  secret (`CF_API_TOKEN`, set via `wrangler secret put`, never readable back
-  out) or stored in D1 via the Settings dashboard (masked in every API
-  response — only a `••••1234`-style hint is ever returned, never the full
-  value).
-- **Unauthenticated by design, protect it yourself**: `/api/schedules/*` and
-  `/api/settings/*` have no built-in auth check — they're meant to sit behind
-  [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/)
-  (or an equivalent) in front of the Worker. `/api/me` reads the
-  `Cf-Access-Authenticated-User-Email` header / `CF_Authorization` JWT cookie
-  if Access is configured, purely for attribution in the audit archive — it
-  is **not** an authorization check.
-- **Rate limiting**: the expensive routes (`/api/appsec`, `/api/zerotrust`,
-  `/api/summary`, `/api/zt-summary`, `/api/schedules/:id/send`,
-  `/api/settings/test`) are capped at 50 requests / 5 minutes per source IP
-  (in-memory, per-isolate — a coarse guard, not a substitute for Access).
+### Vars (`[vars]` in `wrangler.toml`, or the Settings dashboard)
+
+| Name | Required | Default | Purpose |
+|---|---|---|---|
+| `ENVIRONMENT` | No | `"production"` | Informational; surfaced by `/health` |
+| `ALLOWED_ORIGIN` | No | `""` | Extra allowed CORS origins (comma-separated). Only needed if the frontend runs on a **different** origin than the Worker |
+| `CF_ACCOUNT_ID` | For scheduled reports | `""` | Account the scheduler and zone picker use. Backend-only — never sent from the browser |
+| `EMAIL_FROM` | For scheduled emails | `""` | Sender address; its domain must be onboarded to Email Sending |
+
+### Secrets (`npx wrangler secret put <NAME>`)
+
+| Name | Required | Purpose |
+|---|---|---|
+| `CF_API_TOKEN` | For scheduled reports | Token the cron job uses to generate reports. Write-only — never readable back out |
+
+Interactive reports need **neither** of these: the user supplies their own
+token and account/zone in the form.
+
+### Dashboard-managed settings (D1, no redeploy)
+
+The **Settings** page writes to the `settings` table and takes precedence
+over the env var / secret. This lets you rotate the backend token or change
+the account without redeploying. The API only ever returns a masked hint
+(`••••1234`), never the stored value. See `apps/api/src/services/settings.ts`.
+
+### Precedence
+
+```
+D1 settings (dashboard)  >  Worker secret / [vars]  >  unset (feature disabled)
+```
 
 ---
 
@@ -217,8 +477,7 @@ without them (that section just shows an honest empty state).
 | Permission | Required | Unlocks |
 |---|---|---|
 | Account · Zero Trust Read | ✅ | Access apps, policies, auth events |
-| Account · Access: Apps and Policies · Read | ✅ | Access application inventory |
-| Account · Access: Apps and Policies · Read | ✅ | Per-app policy rules |
+| Account · Access: Apps and Policies · Read | ✅ | Access application inventory + per-app policy rules |
 | Account · Access: Audit Logs · Read | optional | Real seat counts + last-login (`/access/users`) |
 | Account · Gateway · Read | ✅ | DNS/HTTP/Network filtering stats, WARP device status |
 | Account · Zero Trust Analytics | ✅ | GraphQL: auth events, Gateway, WARP status, bandwidth |
@@ -228,6 +487,70 @@ without them (that section just shows an honest empty state).
 | Account · Zero Trust Read/Write | optional | CASB findings (`/data-security/posture/findings`) |
 | Account · Notifications · Read | optional | Recent alert history |
 | Account · Account Settings · Read | ✅ | Account name |
+
+---
+
+## Security
+
+- **Interactive reports**: your API token is sent once per report-generation
+  request, held only in memory for that request, and never written to D1,
+  R2, or logs. Nothing is stored server-side unless you explicitly click
+  "Save to Audit Archive" (which stores the *rendered report HTML*, not the
+  token).
+- **Scheduled reports**: the token used by the cron job is either a Worker
+  secret (`CF_API_TOKEN`, set via `wrangler secret put`, never readable back
+  out) or stored in D1 via the Settings dashboard (masked in every API
+  response — only a `••••1234`-style hint is ever returned, never the full
+  value).
+- **Unauthenticated by design, protect it yourself**: `/api/schedules/*` and
+  `/api/settings/*` have no built-in auth check — they're meant to sit behind
+  [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/)
+  (or an equivalent) in front of the Worker. `/api/me` reads the
+  `Cf-Access-Authenticated-User-Email` header / `CF_Authorization` JWT cookie
+  if Access is configured, purely for attribution in the audit archive — it
+  is **not** an authorization check.
+- **Rate limiting**: the expensive routes (`/api/appsec`, `/api/zerotrust`,
+  `/api/summary`, `/api/zt-summary`, `/api/schedules/:id/send`,
+  `/api/settings/test`) are capped at **50 requests / 5 minutes per source
+  IP** (in-memory, per-isolate — a coarse guard, not a substitute for
+  Access).
+- **Never commit resource IDs or tokens**: `wrangler.local.toml` and
+  `.env.test` are gitignored. The committed `wrangler.toml` deliberately
+  contains no `account_id` or `database_id`.
+
+---
+
+## Performance and platform limits
+
+Measured on a large production Cloudflare One account:
+
+| Aspect | Value | Notes |
+|---|---|---|
+| Report generation | **~23–30 s** wall, **154 ms** CPU | I/O-bound on ~75–120 upstream Cloudflare API calls, fanned out with `Promise.allSettled` |
+| AI executive summary | ~10 s typical, **up to ~113 s** worst case | Model fallback chain; see [AI models](#ai-models) |
+| Subrequests per report | ~75–120 | Paid-plan limit is 10,000 — plenty of headroom |
+| CPU per report | 154 ms | Paid-plan default limit is 30 s per request |
+| Cron invocation | Hourly | Cron Triggers get 15 min wall time, 30 s CPU (<1 h interval) |
+
+**Client timeouts are the real constraint, not Cloudflare's.** A report plus
+a worst-case AI summary can exceed two minutes. If you script against the
+API, set a generous timeout (`curl --max-time 170` or similar). The
+browser UI already handles this with progress state.
+
+Two upstream API constraints worth knowing:
+
+- **Gateway DNS breakdown data has a ~4-week retention wall.** Cloudflare's
+  `gatewayResolverQueriesAdaptiveGroups` GraphQL dataset rejects any query
+  whose `since` is more than ~4 weeks before *now*, regardless of the
+  requested upper bound. Headline DNS totals come from a newer analytics API
+  with no such limit, so they stay accurate; only the detailed breakdown
+  widgets (top domains, categories, resolver mix, daily trend) can come back
+  empty for an older calendar month. The report says so inline via
+  `dataConfidence` rather than rendering a misleading blank chart.
+- **`/devices?per_page=500` is intermittently flaky on large fleets.** Device
+  counts fall back through REST `total_count` → GraphQL
+  `warpLatestStatus.total` → DNS analytics `uniqueDeviceCount`, taking the
+  maximum.
 
 ---
 
@@ -243,6 +566,11 @@ recipients, subject, and an optional custom message.
 - **Cadence**: daily / weekly / monthly, evaluated in the schedule's
   captured timezone. A 90-minute grace window after the intended send time
   doubles as catch-up if a cron event is missed.
+- **Timeframe**: a rolling window (1/3/5/7/14/30 days) **or "Last Month"**,
+  which reports the exact previous calendar month with its real day count
+  (28–31) and a proper period label like "August 2026". Prefer this for
+  monthly schedules — a fixed 30-day window silently drifts against real
+  month boundaries.
 - **Double-send guard**: an atomic `last_run_at` claim (compared against the
   intended occurrence, not wall-clock time) prevents duplicate sends.
 - **"Send test now"**: generates and sends immediately, recorded as a
@@ -259,21 +587,110 @@ recipients, subject, and an optional custom message.
 Executive summaries use a three-tier Workers AI fallback chain, since large
 reasoning models can occasionally exhaust their token budget mid-thought
 before writing any output (`finish_reason: "length"`, empty content) —
-confirmed live in testing, non-deterministically, on prompts built from
-larger real reports:
+confirmed live, non-deterministically, on prompts built from larger real
+reports:
 
-1. `@cf/zai-org/glm-5.3-flash` (primary)
-2. `@cf/openai/gpt-oss-120b` (fallback)
-3. `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (final fallback)
+1. `@cf/zai-org/glm-5.3-flash` (primary, `max_tokens: 3000`)
+2. `@cf/openai/gpt-oss-120b` (fallback, `max_tokens: 3000`)
+3. `@cf/meta/llama-3.3-70b-instruct-fp8-fast` (final fallback, `max_tokens: 2000`)
 
-A response shorter than a real 5-paragraph summary is treated as a failure
-and the next model is tried — see `MIN_VALID_SUMMARY_LENGTH` in
-`apps/api/src/routes/ai-summary.ts` / `ai-zt-summary.ts`. In the rare case
-all three models fail, report generation still succeeds — only the
-executive summary is omitted (or, for the interactive UI, shown as an
-explicit "AI summary unavailable" error rather than silently blank).
-Because of this fallback chain, summary generation can occasionally take
-up to ~60-120 seconds on a bad run; this is expected, not a hang.
+A response shorter than a real 5-paragraph summary (`MIN_VALID_SUMMARY_LENGTH
+= 300` chars) is treated as a failure and the next model is tried. In the rare
+case all three fail, report generation still succeeds — only the executive
+summary is omitted (or, in the UI, shown as an explicit "AI summary
+unavailable" error rather than silently blank).
+
+This chain is not theoretical. A logged real run:
+
+```
+[AI] @cf/zai-org/glm-5.3-flash returned empty/truncated (0 chars): finish_reason "length"
+[AI] @cf/openai/gpt-oss-120b returned empty/truncated (0 chars): finish_reason "length"
+→ @cf/meta/llama-3.3-70b-instruct-fp8-fast produced a 490-word summary
+```
+
+Both reasoning models spent their entire budget on `reasoning_content` and
+emitted no answer; the third model delivered. Total wall time 113 s. This is
+expected behavior, not a hang — and it is why the chain exists.
+
+---
+
+## API reference
+
+All routes are `POST` unless noted. Rate-limited routes are marked ⏱
+(50 req / 5 min / IP).
+
+### Reports
+
+| Route | Purpose |
+|---|---|
+| `POST /api/zones` | List zones for a token (lightweight, not rate limited) |
+| `POST /api/appsec` ⏱ | Generate AppSec report data for a zone |
+| `POST /api/zerotrust` ⏱ | Generate Zero Trust report data for an account |
+| `POST /api/summary` ⏱ | AI executive summary for an AppSec report |
+| `POST /api/zt-summary` ⏱ | AI executive summary for a Zero Trust report |
+
+Report requests accept `{ token, accountId | zoneId, days?, rangeMode?, tzOffset?, isPoc? }`
+where `rangeMode` is `"rolling"` (default) or `"calendar_month"`.
+
+### Finding registers (D1-backed lifecycle tracking)
+
+| Route | Purpose |
+|---|---|
+| `GET /api/remediation` · `PATCH /api/remediation/:id` | Remediation register — status, owner |
+| `GET /api/casb-findings` · `PATCH /api/casb-findings/:id` | CASB / Data Security Posture findings |
+| `GET /api/alert-register` · `PATCH /api/alert-register/:id` | Alert investigation workflow |
+
+### Audit archive (R2)
+
+| Route | Purpose |
+|---|---|
+| `POST /api/audit` | Save a rendered report |
+| `GET /api/audit` | List archived reports |
+| `GET /api/audit/:key` | Fetch one archived report |
+
+### Scheduled reports (D1)
+
+| Route | Purpose |
+|---|---|
+| `GET /api/schedule/zones` | Zone picker using the backend token |
+| `GET /api/schedules` · `POST /api/schedules` | List / create |
+| `PUT /api/schedules/:id` · `DELETE /api/schedules/:id` | Update / delete |
+| `POST /api/schedules/:id/send` ⏱ | Send test now (full report generation) |
+| `GET /api/schedules/:id/history` | Run history |
+
+### Settings and meta
+
+| Route | Purpose |
+|---|---|
+| `GET /api/settings` · `PUT /api/settings` | Backend token/account (always masked on read) |
+| `POST /api/settings/test` ⏱ | Validate settings against the real Cloudflare API |
+| `GET /api/me` | Cloudflare Access identity, for attribution only |
+| `GET /health` | Liveness — `{ ok, version, env }` |
+
+---
+
+## Data sources and honesty guarantees
+
+Every chart is backed by a real Cloudflare GraphQL Analytics dataset, REST
+endpoint, or analytics API — documented inline in the source next to every
+fetcher (`apps/api/src/services/`). The project holds itself to three rules:
+
+1. **No fabricated numbers.** Where a metric genuinely cannot be sourced from
+   a real Cloudflare API, the report renders an honest empty state instead of
+   a plausible-looking value.
+2. **Dashboard parity.** Headline KPIs are sourced from the same endpoints
+   Cloudflare's own dashboard uses (`apps/api/src/services/cf-dashboard-analytics.ts`),
+   so the report's numbers match what the customer sees when they log in. For
+   example, WARP client session events and service-token validations are
+   excluded from "authentication events" (and surfaced separately) rather than
+   inflating the headline.
+3. **Explicit uncertainty.** When an upstream API limit degrades a section, a
+   `dataConfidence` note explains exactly why — see the DNS breakdown
+   retention wall in [Performance and platform limits](#performance-and-platform-limits).
+
+Each `/analytics/query/*` call fails soft to the older GraphQL/REST source,
+so a breaking upstream change degrades a section rather than breaking the
+report.
 
 ---
 
@@ -300,19 +717,28 @@ your Pages URL so CORS allows it.
 ## Project structure
 
 ```
-apps/api/            Cloudflare Worker (Hono) — all report generation logic
-  src/routes/         HTTP handlers (appsec, zerotrust, summaries, schedules, settings, audit)
-  src/services/        GraphQL/REST fetchers per Cloudflare product area
-  src/scheduler.ts     Cron entrypoint + email digest runner
-apps/web/             React + Vite frontend
-  src/pages/            Report pages + input forms
-  src/pages/sections/   AppSec report sections
-  src/pages/zt-sections/  Zero Trust report sections
-  functions/            Optional Pages Function (see Alternative topology above)
-migrations/           D1 schema (schedules, settings, send_history)
-wrangler.toml         Public deploy template (no resource IDs — auto-provisioned)
-wrangler.local.example.toml   Template for your own local wrangler.local.toml
-scripts/deploy.sh     Build → migrate → deploy
+apps/api/                  Cloudflare Worker (Hono) — all report generation logic
+  src/index.ts               Route table + rate limiting + CORS
+  src/routes/                HTTP handlers (appsec, zerotrust, summaries, schedules,
+                             settings, audit, registers)
+  src/services/              GraphQL/REST/analytics fetchers per Cloudflare product area
+    cf-graphql.ts              Zone GraphQL analytics + date-range helpers
+    cf-zerotrust-graphql.ts    Zero Trust GraphQL datasets
+    cf-dashboard-analytics.ts  Dashboard-exact /analytics/query/* endpoints
+    cf-rest.ts                 REST config/inventory fetchers
+    email-template.ts          Email-safe HTML digest renderer
+  src/scheduler.ts           Cron entrypoint + email digest runner
+apps/web/                  React + Vite frontend
+  src/pages/                 Report pages + input forms
+  src/pages/sections/        AppSec report sections
+  src/pages/zt-sections/     Zero Trust report sections
+  src/utils/formatters.ts    Number/rate formatting (e.g. non-misleading small %)
+  functions/                 Optional Pages Function (see Alternative topology above)
+migrations/                D1 schema — see the migrations table above
+wrangler.toml              Public deploy template (no resource IDs — auto-provisioned)
+wrangler.local.example.toml  Template for your own gitignored wrangler.local.toml
+scripts/deploy.sh          Build → migrate → deploy
+tests/e2e/                 Playwright end-to-end tests
 ```
 
 ---
@@ -320,12 +746,31 @@ scripts/deploy.sh     Build → migrate → deploy
 ## Testing
 
 ```bash
-npm run typecheck     # tsc --noEmit across both apps
-npm run test:e2e       # Playwright — see tests/e2e/
+npm run typecheck       # tsc --noEmit (api) + tsc -b (web)
+npm run test:e2e        # Playwright — see tests/e2e/
+npm run test:e2e:ui     # interactive runner
+npm run test:e2e:report # open the last HTML report
 ```
 
 Live/browser E2E tests need real credentials in `.env.test` (copy from
 `.env.test.example` — never committed).
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause and fix |
+|---|---|
+| `Worker exceeded resource limits` (Error 1102) | You are on the Workers **Free** plan (10 ms CPU / 50 subrequests). This app needs Workers Paid — see [Why Workers Paid is required](#why-workers-paid-is-required) |
+| Report request times out in your client | Generation takes ~30 s, and a worst-case AI summary up to ~113 s. Raise your client timeout (`curl --max-time 170`) |
+| AI summary missing or "unavailable" | All three models failed, or Workers AI's 10,000 Neurons/day allowance is exhausted. The report itself still generates |
+| `403` / error 5035 from Workers AI | `@cf/zai-org/glm-5.3-flash` requires paid billing. Upgrade to Workers Paid or use AI Gateway credits |
+| A report section is empty | Usually a missing optional token permission — check the [permission tables](#cloudflare-api-token-permissions). Empty states are deliberate, never faked |
+| DNS breakdown charts empty on a "Last Month" report | Expected: Cloudflare's DNS breakdown GraphQL dataset only retains ~4 weeks. Headline DNS totals are still accurate. See the `dataConfidence` note in the report |
+| Scheduled reports never send | Check `CF_API_TOKEN` (or Settings), `CF_ACCOUNT_ID`, `EMAIL_FROM`, that the sending domain is onboarded, and the schedule's run history for the recorded error |
+| `wrangler dev` ignores my D1 database | `npm run dev:api` reads `wrangler.toml`. Use `npx wrangler dev --config wrangler.local.toml` |
+| Deploy fails on missing `database_id` | Run `npx wrangler d1 create poc-report-schedules` and put the ID in `wrangler.local.toml` |
+| TypeScript doesn't know a new binding | Run `npm run cf-typegen` to regenerate `worker-configuration.d.ts` |
 
 ---
 
