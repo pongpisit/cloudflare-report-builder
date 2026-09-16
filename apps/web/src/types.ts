@@ -464,6 +464,9 @@ export interface ReportInput {
   // "custom" mode: explicit local dates for the report period.
   sinceDate?: string;   // YYYY-MM-DD (first day, inclusive)
   untilDate?: string;   // YYYY-MM-DD (last day, inclusive; may be today)
+  // Optional intra-day bounds, HH:MM local (24h). Defaults: 00:00 / 23:59.
+  sinceTime?: string;
+  untilTime?: string;
   // "calendar_month" mode: which month to report — 1 = last month (default),
   // 2 = the month before that, etc. (1..12).
   monthsAgo?: number;
@@ -776,6 +779,8 @@ export interface ScheduleConfig {
   rangeMode: ReportRangeMode;
   sinceDate: string | null;
   untilDate: string | null;
+  sinceTime: string | null;
+  untilTime: string | null;
   monthsAgo: number | null;
 }
 
@@ -790,6 +795,8 @@ export interface ScheduleInput {
   rangeMode: ReportRangeMode;
   sinceDate?: string | null;
   untilDate?: string | null;
+  sinceTime?: string | null;
+  untilTime?: string | null;
   monthsAgo?: number | null;
   frequency: ScheduleFrequency;
   dayOfWeek: number | null;

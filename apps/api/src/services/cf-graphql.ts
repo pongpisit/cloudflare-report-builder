@@ -217,20 +217,38 @@ export function lastCalendarMonth(tzOffset = 0, monthsAgo = 1): {
 
 // ─── Custom explicit date range ───────────────────────────────────────────────
 /**
- * customDateRange: an explicit user-selected range (YYYY-MM-DD dates, local
- * to the caller's timezone) — the "time selector" for interactive reports
- * and schedules. Returns the same shape as last30Days()/lastCalendarMonth()
+ * customDateRange: an explicit user-selected range — the "time selector" for
+ * interactive reports and schedules. Dates are YYYY-MM-DD local to the
+ * caller's timezone; optional times (HH:MM, or HH:MM:SS) further bound the
+ * start/end within those days. Defaults: sinceTime 00:00, untilTime 23:59
+ * (i.e. whole days). Returns the same shape as last30Days()/lastCalendarMonth()
  * so all range modes are interchangeable downstream.
  *
  * Validation (returns null on any failure):
  *   - both dates must be strict YYYY-MM-DD that exist (2026-02-31 rejected)
- *   - since <= until, and until must not be in the future (local "today" is
- *     the latest allowed end date — partial-month-so-far is fine)
- *   - span 1..366 days (inclusive of both endpoints)
+ *   - times, when given, must be valid HH:MM[:SS] in 24h form
+ *   - since ≤ until (date+time), and the end must not be in the future
+ *     (local "now" is the latest allowed end instant)
+ *   - date span 1..366 days (inclusive of both endpoint dates)
  */
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-export function customDateRange(sinceDate: string, untilDate: string, tzOffset = 0): {
+const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/;
+
+function parseTimeParts(s: string | undefined, fallbackH: number, fallbackM: number): { h: number; m: number } | null {
+  if (!s) return { h: fallbackH, m: fallbackM };
+  const m = TIME_RE.exec(s);
+  if (!m) return null;
+  return { h: +m[1], m: +m[2] };
+}
+
+export function customDateRange(
+  sinceDate: string,
+  untilDate: string,
+  tzOffset = 0,
+  sinceTime?: string,
+  untilTime?: string,
+): {
   since: string;
   until: string;
   untilQuery: string;
@@ -254,22 +272,40 @@ export function customDateRange(sinceDate: string, untilDate: string, tzOffset =
   const end = parse(untilDate);
   if (!start || !end) return null;
 
-  const days = Math.round((end.ms - start.ms) / DAY_MS) + 1; // inclusive
+  // Times: default to a whole-day range — 00:00 start, 23:59 end (inclusive
+  // through 23:59:59.999).
+  const st = parseTimeParts(sinceTime, 0, 0);
+  const et = parseTimeParts(untilTime, 23, 59);
+  if (!st || !et) return null;
+
+  const startLocalMs = start.ms + st.h * 60 * 60 * 1000 + st.m * 60 * 1000;
+  const endMinuteLocalMs = end.ms + et.h * 60 * 60 * 1000 + et.m * 60 * 1000;
+  // End is inclusive to the last ms of the chosen minute.
+  const endExclusiveLocalMs = endMinuteLocalMs + 60 * 1000;
+
+  // The end instant must not be before the start instant — dates can be
+  // ordered correctly while times are reversed (e.g. same day 18:00 → 09:00).
+  if (endMinuteLocalMs < startLocalMs) return null;
+
+  // Calendar days covered (inclusive of both endpoint dates) — used for the
+  // span cap and meta.days; intra-day times don't change it.
+  const days = Math.round((end.ms - start.ms) / DAY_MS) + 1;
   if (days < 1 || days > 366) return null;
 
-  // until must not be in the future in the caller's local timezone.
-  // Same local-wall-clock trick as last30Days()/lastCalendarMonth().
-  const localNow = new Date(Date.now() - tzOffset * 60 * 1000);
-  const todayMidnightLocalMs = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate());
-  if (end.ms > todayMidnightLocalMs) return null;
+  // The end instant must not be in the future in the caller's local
+  // timezone. Same local-wall-clock trick as last30Days()/lastCalendarMonth().
+  const localNowMs = Date.now() - tzOffset * 60 * 1000;
+  if (endMinuteLocalMs > localNowMs) return null;
 
-  // Real UTC instants: local midnight → UTC via the inverse tz shift.
-  const sinceTsMs = start.ms + tzOffset * 60 * 1000;
-  const endExclusiveTsMs = end.ms + DAY_MS + tzOffset * 60 * 1000;
+  // Real UTC instants: local wall clock → UTC via the inverse tz shift.
+  const sinceTsMs = startLocalMs + tzOffset * 60 * 1000;
+  const endExclusiveTsMs = endExclusiveLocalMs + tzOffset * 60 * 1000;
 
   // Human label for meta/AI summaries: "Sep 1–15, 2026" / "Aug 30 – Sep 3,
   // 2026" / "Dec 28, 2025 – Jan 3, 2026" / single day: "Sep 3, 2026".
+  // Intra-day bounds append as ", HH:MM–HH:MM" when non-default.
   const d = (n: number) => String(n);
+  const hh = (t: { h: number; m: number }) => `${String(t.h).padStart(2, "0")}:${String(t.m).padStart(2, "0")}`;
   let periodLabel: string;
   if (days === 1) {
     periodLabel = `${MONTH_ABBR[start.mo]} ${d(start.d)}, ${start.y}`;
@@ -280,6 +316,8 @@ export function customDateRange(sinceDate: string, untilDate: string, tzOffset =
   } else {
     periodLabel = `${MONTH_ABBR[start.mo]} ${d(start.d)}, ${start.y} – ${MONTH_ABBR[end.mo]} ${d(end.d)}, ${end.y}`;
   }
+  const defaultTimes = st.h === 0 && st.m === 0 && et.h === 23 && et.m === 59;
+  if (!defaultTimes) periodLabel += `, ${hh(st)}–${hh(et)}`;
 
   return {
     since: sinceDate,

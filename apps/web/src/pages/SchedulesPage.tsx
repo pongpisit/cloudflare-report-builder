@@ -63,8 +63,12 @@ const MONTHS_FULL = ["January", "February", "March", "April", "May", "June", "Ju
  *  range math: "last calendar month", "August 2026 (2 months back)",
  *  "custom: 2026-08-30 → 2026-09-03", or "N-day". */
 function describeRange(s: ScheduleConfig): string {
-  if (s.rangeMode === "custom")
-    return `custom ${s.sinceDate ?? "?"} → ${s.untilDate ?? "?"}`;
+  if (s.rangeMode === "custom") {
+    const times = s.sinceTime || s.untilTime
+      ? ` ${s.sinceTime ?? "00:00"}–${s.untilTime ?? "23:59"}`
+      : "";
+    return `custom ${s.sinceDate ?? "?"} → ${s.untilDate ?? "?"}${times}`;
+  }
   if (s.rangeMode === "calendar_month") {
     const back = s.monthsAgo ?? 1;
     if (back === 1) return "last calendar month";
@@ -534,6 +538,8 @@ function configToInput(s: ScheduleConfig, enabledOverride?: boolean): ScheduleIn
     rangeMode: s.rangeMode,
     sinceDate: s.sinceDate ?? null,
     untilDate: s.untilDate ?? null,
+    sinceTime: s.sinceTime ?? null,
+    untilTime: s.untilTime ?? null,
     monthsAgo: s.monthsAgo ?? null,
     frequency: s.frequency,
     dayOfWeek: s.dayOfWeek,
@@ -569,6 +575,8 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
   const [monthsAgo, setMonthsAgo] = useState<number>(initial?.monthsAgo ?? 1);
   const [sinceDate, setSinceDate] = useState<string>(initial?.sinceDate ?? "");
   const [untilDate, setUntilDate] = useState<string>(initial?.untilDate ?? "");
+  const [sinceTime, setSinceTime] = useState<string>(initial?.sinceTime ?? "");
+  const [untilTime, setUntilTime] = useState<string>(initial?.untilTime ?? "");
   const [frequency, setFrequency] = useState<ScheduleFrequency>(initial?.frequency ?? "weekly");
   const [dayOfWeek, setDayOfWeek] = useState<number>(initial?.dayOfWeek ?? 1);
   const [dayOfMonth, setDayOfMonth] = useState<number>(initial?.dayOfMonth ?? 1);
@@ -631,6 +639,9 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       if (!sinceDate || !untilDate) { setFormError("Pick a start and end date for the custom range."); return; }
       if (!sv || !uv) { setFormError("Custom range dates must be valid (YYYY-MM-DD)."); return; }
       if (uv < sv) { setFormError("The end date can't be before the start date."); return; }
+      if (sinceDate === untilDate && sinceTime && untilTime && untilTime < sinceTime) { setFormError("The end time can't be before the start time on the same day."); return; }
+      if (sinceTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(sinceTime)) { setFormError("Start time must be a valid HH:MM (24h)."); return; }
+      if (untilTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(untilTime)) { setFormError("End time must be a valid HH:MM (24h)."); return; }
       if (untilDate > todayStr) { setFormError("The end date can't be in the future."); return; }
       if (Math.round((uv.getTime() - sv.getTime()) / 86400000) + 1 > 366) { setFormError("Custom range can't exceed 366 days."); return; }
     }
@@ -646,6 +657,8 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       rangeMode,
       sinceDate: rangeMode === "custom" ? sinceDate : null,
       untilDate: rangeMode === "custom" ? untilDate : null,
+      sinceTime: rangeMode === "custom" && sinceTime ? sinceTime : null,
+      untilTime: rangeMode === "custom" && untilTime ? untilTime : null,
       monthsAgo: rangeMode === "calendar_month" ? monthsAgo : null,
       frequency,
       dayOfWeek: frequency === "weekly" ? dayOfWeek : null,
@@ -824,15 +837,24 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
           )}
           {rangeMode === "custom" && (
             <div style={{ marginTop: 8 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <input
                   type="date"
                   value={sinceDate}
                   max={todayLocalStr()}
                   onChange={(e) => setSinceDate(e.target.value)}
                   className="ar-input"
-                  style={{ flex: 1, cursor: "pointer" }}
+                  style={{ flex: 1, minWidth: 130, cursor: "pointer" }}
                   aria-label="Report period start date"
+                />
+                <input
+                  type="time"
+                  value={sinceTime}
+                  onChange={(e) => setSinceTime(e.target.value)}
+                  className="ar-input"
+                  style={{ flex: 0.7, minWidth: 84, cursor: "pointer" }}
+                  aria-label="Report period start time (optional, default 00:00)"
+                  title="Start time — optional, defaults to 00:00"
                 />
                 <span style={{ fontSize: 12, color: "#5d5e65" }}>→</span>
                 <input
@@ -841,12 +863,21 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
                   max={todayLocalStr()}
                   onChange={(e) => setUntilDate(e.target.value)}
                   className="ar-input"
-                  style={{ flex: 1, cursor: "pointer" }}
+                  style={{ flex: 1, minWidth: 130, cursor: "pointer" }}
                   aria-label="Report period end date"
+                />
+                <input
+                  type="time"
+                  value={untilTime}
+                  onChange={(e) => setUntilTime(e.target.value)}
+                  className="ar-input"
+                  style={{ flex: 0.7, minWidth: 84, cursor: "pointer" }}
+                  aria-label="Report period end time (optional, default 23:59)"
+                  title="End time — optional, defaults to 23:59 (inclusive)"
                 />
               </div>
               <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6, marginBottom: 0 }}>
-                Exact period in the schedule's timezone ({tzLabel(tzOffset)}). Daily totals stay accurate for old ranges; fine-grained breakdowns only cover ~30 days back.
+                Exact period in the schedule's timezone ({tzLabel(tzOffset)}); times are optional (default 00:00 → 23:59, end inclusive). Daily totals stay accurate for old ranges; fine-grained breakdowns only cover ~30 days back.
               </p>
             </div>
           )}

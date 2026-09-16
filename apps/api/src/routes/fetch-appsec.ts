@@ -117,11 +117,11 @@ import type { AppSecData, CertificateInfo, WafManagedRule, RateLimitRule } from 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
 function validateInput(body: unknown):
-  | { token: string; zoneId: string; accountId: string; days: number; tzOffset: number; rangeMode: ReportRangeMode; sinceDate?: string; untilDate?: string; monthsAgo?: number }
+  | { token: string; zoneId: string; accountId: string; days: number; tzOffset: number; rangeMode: ReportRangeMode; sinceDate?: string; untilDate?: string; sinceTime?: string; untilTime?: string; monthsAgo?: number }
   | { error: string }
   | null {
   if (!body || typeof body !== "object") return null;
-  const { token, zoneId, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, monthsAgo } = body as Record<string, unknown>;
+  const { token, zoneId, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, sinceTime, untilTime, monthsAgo } = body as Record<string, unknown>;
   if (typeof token !== "string" || !token.trim()) return null;
   if (typeof zoneId !== "string" || !/^[a-f0-9]{32}$/.test(zoneId)) return null;
   if (typeof accountId !== "string" || !/^[a-f0-9]{32}$/.test(accountId)) return null;
@@ -140,9 +140,12 @@ function validateInput(body: unknown):
   if (validRangeMode === "custom") {
     if (typeof sinceDate !== "string" || typeof untilDate !== "string")
       return { error: 'rangeMode "custom" requires sinceDate and untilDate (YYYY-MM-DD, local to tzOffset).' };
-    if (!customDateRange(sinceDate, untilDate, validTz))
-      return { error: `Invalid custom range ${JSON.stringify(sinceDate)} → ${JSON.stringify(untilDate)}: both dates must exist, since ≤ until, until not in the future, span 1–366 days.` };
-    return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "custom", sinceDate, untilDate };
+    // Optional intra-day bounds — undefined means whole days (00:00 → 23:59).
+    const st = typeof sinceTime === "string" ? sinceTime : undefined;
+    const et = typeof untilTime === "string" ? untilTime : undefined;
+    if (!customDateRange(sinceDate, untilDate, validTz, st, et))
+      return { error: `Invalid custom range ${JSON.stringify(sinceDate)} → ${JSON.stringify(untilDate)}${st || et ? ` (${JSON.stringify(st ?? "00:00")}–${JSON.stringify(et ?? "23:59")})` : ""}: dates must exist, start ≤ end, end not in the future, valid HH:MM times, span 1–366 days.` };
+    return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "custom", sinceDate, untilDate, ...(st ? { sinceTime: st } : {}), ...(et ? { untilTime: et } : {}) };
   }
 
   if (validRangeMode === "calendar_month") {
@@ -269,6 +272,10 @@ export async function generateAppsecData(input: {
   sinceDate?: string;
   /** rangeMode "custom": last day, YYYY-MM-DD local (inclusive; may be today). */
   untilDate?: string;
+  /** rangeMode "custom": optional intra-day start bound, HH:MM local. Default 00:00. */
+  sinceTime?: string;
+  /** rangeMode "custom": optional intra-day end bound, HH:MM local (inclusive minute). Default 23:59. */
+  untilTime?: string;
 }): Promise<AppSecData> {
   const { token, zoneId, accountId, tzOffset, rangeMode = "rolling" } = input;
 
@@ -284,7 +291,7 @@ export async function generateAppsecData(input: {
     rangeMode === "calendar_month" ? (lastCalendarMonth(tzOffset, input.monthsAgo ?? 1) as unknown as DatedRange)
     : rangeMode === "custom"
       ? ((input.sinceDate && input.untilDate
-          ? customDateRange(input.sinceDate, input.untilDate, tzOffset)
+          ? customDateRange(input.sinceDate, input.untilDate, tzOffset, input.sinceTime, input.untilTime)
           : null) ?? last30Days(input.days, tzOffset))
     : last30Days(input.days, tzOffset);
   const since      = dateRange.since;       // YYYY-MM-DD display start date (local)

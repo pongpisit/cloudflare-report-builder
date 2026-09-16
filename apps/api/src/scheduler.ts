@@ -204,6 +204,8 @@ export async function runSchedule(
         rangeMode: row.range_mode ?? "rolling",
         sinceDate: row.since_date ?? undefined,
         untilDate: row.until_date ?? undefined,
+        sinceTime: row.since_time ?? undefined,
+        untilTime: row.until_time ?? undefined,
         monthsAgo: row.months_ago ?? undefined,
       });
       const aiSummary = await generateAiSummary(env, appsec, isPoc).catch((e) => {
@@ -225,6 +227,8 @@ export async function runSchedule(
         rangeMode: row.range_mode ?? "rolling",
         sinceDate: row.since_date ?? undefined,
         untilDate: row.until_date ?? undefined,
+        sinceTime: row.since_time ?? undefined,
+        untilTime: row.until_time ?? undefined,
         monthsAgo: row.months_ago ?? undefined,
         db: env.DB,
       });

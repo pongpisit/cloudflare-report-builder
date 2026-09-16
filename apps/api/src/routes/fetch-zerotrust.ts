@@ -70,8 +70,8 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
   try { body = await c.req.json(); }
   catch { return c.json({ error: "Invalid JSON body" }, 400); }
 
-  const { token, accountId, days: rawDays, tzOffset = 0, rangeMode: rawRangeMode, sinceDate: rawSinceDate, untilDate: rawUntilDate, monthsAgo: rawMonthsAgo } =
-    body as { token?: string; accountId?: string; days?: number; tzOffset?: number; rangeMode?: string; sinceDate?: string; untilDate?: string; monthsAgo?: number };
+  const { token, accountId, days: rawDays, tzOffset = 0, rangeMode: rawRangeMode, sinceDate: rawSinceDate, untilDate: rawUntilDate, sinceTime: rawSinceTime, untilTime: rawUntilTime, monthsAgo: rawMonthsAgo } =
+    body as { token?: string; accountId?: string; days?: number; tzOffset?: number; rangeMode?: string; sinceDate?: string; untilDate?: string; sinceTime?: string; untilTime?: string; monthsAgo?: number };
 
   if (!token || typeof token !== "string" || token.length < 10)
     return c.json({ error: "Missing or invalid token" }, 400);
@@ -87,11 +87,15 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
 
   let sinceDate: string | undefined;
   let untilDate: string | undefined;
+  let sinceTime: string | undefined;
+  let untilTime: string | undefined;
   if (rangeMode === "custom") {
     if (typeof rawSinceDate !== "string" || typeof rawUntilDate !== "string")
       return c.json({ error: 'rangeMode "custom" requires sinceDate and untilDate (YYYY-MM-DD, local to tzOffset).' }, 400);
-    if (!customDateRange(rawSinceDate, rawUntilDate, tzOffset))
-      return c.json({ error: `Invalid custom range ${JSON.stringify(rawSinceDate)} → ${JSON.stringify(rawUntilDate)}: both dates must exist, since ≤ until, until not in the future, span 1–366 days.` }, 400);
+    if (typeof rawSinceTime === "string") sinceTime = rawSinceTime;
+    if (typeof rawUntilTime === "string") untilTime = rawUntilTime;
+    if (!customDateRange(rawSinceDate, rawUntilDate, tzOffset, sinceTime, untilTime))
+      return c.json({ error: `Invalid custom range ${JSON.stringify(rawSinceDate)} → ${JSON.stringify(rawUntilDate)}${sinceTime || untilTime ? ` (${JSON.stringify(sinceTime ?? "00:00")}–${JSON.stringify(untilTime ?? "23:59")})` : ""}: dates must exist, start ≤ end, end not in the future, valid HH:MM times, span 1–366 days.` }, 400);
     sinceDate = rawSinceDate;
     untilDate = rawUntilDate;
   }
@@ -103,7 +107,7 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
     monthsAgo = parsed;
   }
 
-  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, monthsAgo, db: c.env.DB });
+  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, sinceTime, untilTime, monthsAgo, db: c.env.DB });
   return c.json({ ok: true, zerotrust });
 }
 
@@ -128,6 +132,10 @@ export async function generateZerotrustData(input: {
   sinceDate?: string;
   /** rangeMode "custom": last day, YYYY-MM-DD local (inclusive; may be today). */
   untilDate?: string;
+  /** rangeMode "custom": optional intra-day start bound, HH:MM local. Default 00:00. */
+  sinceTime?: string;
+  /** rangeMode "custom": optional intra-day end bound, HH:MM local (inclusive minute). Default 23:59. */
+  untilTime?: string;
   /** D1 binding — optional. Powers baseline/period-over-period comparison;
    *  report generation works fully without it, just without deltas. */
   db?: D1Database;
@@ -139,7 +147,7 @@ export async function generateZerotrustData(input: {
     rangeMode === "calendar_month" ? (lastCalendarMonth(tzOffset, input.monthsAgo ?? 1) as unknown as DatedRange)
     : rangeMode === "custom"
       ? ((input.sinceDate && input.untilDate
-          ? customDateRange(input.sinceDate, input.untilDate, tzOffset)
+          ? customDateRange(input.sinceDate, input.untilDate, tzOffset, input.sinceTime, input.untilTime)
           : null) ?? l30(input.days, tzOffset))
     : l30(input.days, tzOffset);
   const { since, until, sinceTs, untilTs } = dateRange;

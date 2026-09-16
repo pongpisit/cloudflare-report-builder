@@ -340,6 +340,7 @@ ADD COLUMN` with defaults):
 | `0007_schedule_range_mode.sql` | `schedules.range_mode` (rolling vs. calendar month) |
 | `0008_schedule_custom_range.sql` | `schedules.since_date`/`until_date` (custom ranges), `months_ago` (explicit month picking) |
 | `0009_schedule_range_mode_custom.sql` | Rebuilds `schedules` to allow `range_mode = 'custom'` (SQLite can't ALTER a CHECK constraint) |
+| `0010_schedule_range_times.sql` | `schedules.since_time`/`until_time` (intra-day bounds for custom ranges) |
 
 ### 3. Worker build and deploy
 
@@ -584,10 +585,11 @@ recipients, subject, and an optional custom message.
   doubles as catch-up if a cron event is missed.
 - **Timeframe**: a rolling window (1/3/5/7/14/30 days), **any of the last 12
   calendar months** (with its real 28–31 day count and a proper period label
-  like "August 2026"), or **an exact custom date range** (any start/end
-  dates up to 366 days, interpreted in the schedule's timezone). Prefer a
-  calendar month for monthly schedules — a fixed 30-day window silently
-  drifts against real month boundaries.
+  like "August 2026"), or **an exact custom range** — start/end dates up to
+  366 days apart plus optional HH:MM times (e.g. "Sep 1 09:00 → Sep 3
+  17:30"), interpreted in the schedule's timezone. Prefer a calendar month
+  for monthly schedules — a fixed 30-day window silently drifts against
+  real month boundaries.
 - **Double-send guard**: an atomic `last_run_at` claim (compared against the
   intended occurrence, not wall-clock time) prevents duplicate sends.
 - **"Send test now"**: generates and sends immediately, recorded as a
@@ -647,9 +649,11 @@ All routes are `POST` unless noted. Rate-limited routes are marked ⏱
 | `POST /api/zt-summary` ⏱ | AI executive summary for a Zero Trust report |
 
 Report requests accept `{ token, accountId | zoneId, days?, rangeMode?, tzOffset?,
-monthsAgo?, sinceDate?, untilDate?, isPoc? }` where `rangeMode` is `"rolling"`
-(default), `"calendar_month"` (+ optional `monthsAgo` 1–12), or `"custom"`
-(+ `sinceDate`/`untilDate`, local YYYY-MM-DD, inclusive, span 1–366 days).
+monthsAgo?, sinceDate?, untilDate?, sinceTime?, untilTime?, isPoc? }` where
+`rangeMode` is `"rolling"` (default), `"calendar_month"` (+ optional `monthsAgo`
+1–12), or `"custom"` (+ `sinceDate`/`untilDate`, local YYYY-MM-DD, inclusive,
+span 1–366 days; + optional `sinceTime`/`untilTime`, HH:MM local, defaults
+00:00 / 23:59 with the end minute inclusive).
 
 ### Finding registers (D1-backed lifecycle tracking)
 

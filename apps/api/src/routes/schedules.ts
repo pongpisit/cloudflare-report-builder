@@ -57,6 +57,8 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     rangeMode: row.range_mode ?? "rolling",
     sinceDate: row.since_date ?? null,
     untilDate: row.until_date ?? null,
+    sinceTime: row.since_time ?? null,
+    untilTime: row.until_time ?? null,
     monthsAgo: row.months_ago ?? null,
   };
 }
@@ -83,6 +85,8 @@ interface ValidatedSchedule {
   rangeMode: ReportRangeMode;
   sinceDate: string | null;
   untilDate: string | null;
+  sinceTime: string | null;
+  untilTime: string | null;
   monthsAgo: number | null;
 }
 
@@ -132,13 +136,17 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
 
   let sinceDate: string | null = null;
   let untilDate: string | null = null;
+  let sinceTime: string | null = null;
+  let untilTime: string | null = null;
   let monthsAgo: number | null = null;
   let days: number;
   if (rangeMode === "custom") {
     if (typeof b.sinceDate !== "string" || typeof b.untilDate !== "string")
       return { error: 'rangeMode "custom" requires sinceDate and untilDate (YYYY-MM-DD)' };
-    if (!customDateRange(b.sinceDate, b.untilDate, tzOffset))
-      return { error: "Invalid custom range: both dates must exist (YYYY-MM-DD), since ≤ until, until not in the future, span 1–366 days" };
+    if (typeof b.sinceTime === "string") sinceTime = b.sinceTime;
+    if (typeof b.untilTime === "string") untilTime = b.untilTime;
+    if (!customDateRange(b.sinceDate, b.untilDate, tzOffset, sinceTime ?? undefined, untilTime ?? undefined))
+      return { error: "Invalid custom range: dates must exist (YYYY-MM-DD), times must be HH:MM, start ≤ end, end not in the future, span 1–366 days" };
     sinceDate = b.sinceDate;
     untilDate = b.untilDate;
     days = 30;
@@ -208,7 +216,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
       name, reportType, zoneId, zoneName, days, tzOffset, frequency,
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
       isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
-      sinceDate, untilDate, monthsAgo,
+      sinceDate, untilDate, sinceTime, untilTime, monthsAgo,
     },
   };
 }
@@ -241,15 +249,15 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
        (id, name, report_type, zone_id, zone_name, days, tz_offset, frequency,
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
         is_poc, client_name, enabled, created_at, updated_at, range_mode,
-        since_date, until_date, months_ago)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        since_date, until_date, since_time, until_time, months_ago)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
       data.tzOffset, data.frequency, data.dayOfWeek, data.dayOfMonth,
       data.sendHourUtc, data.recipients, data.subject, data.message,
       data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode,
-      data.sinceDate, data.untilDate, data.monthsAgo
+      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo
     )
     .run();
 
@@ -278,7 +286,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        frequency = ?, day_of_week = ?, day_of_month = ?, send_hour_utc = ?,
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
        enabled = ?, updated_at = ?, range_mode = ?,
-       since_date = ?, until_date = ?, months_ago = ?
+       since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?
      WHERE id = ?`
   )
     .bind(
@@ -286,7 +294,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
       data.frequency, data.dayOfWeek, data.dayOfMonth, data.sendHourUtc,
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
       data.enabled, now, data.rangeMode,
-      data.sinceDate, data.untilDate, data.monthsAgo, id
+      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, id
     )
     .run();
 

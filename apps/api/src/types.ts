@@ -64,6 +64,8 @@ export interface ScheduleRow {
   range_mode: ReportRangeMode;
   since_date: string | null;
   until_date: string | null;
+  since_time: string | null;
+  until_time: string | null;
   months_ago: number | null;
 }
 
@@ -94,6 +96,8 @@ export interface ScheduleConfig {
   rangeMode: ReportRangeMode;
   sinceDate: string | null;
   untilDate: string | null;
+  sinceTime: string | null;
+  untilTime: string | null;
   monthsAgo: number | null;
 }
 

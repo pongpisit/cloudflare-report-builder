@@ -75,6 +75,8 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
   const [monthsAgo, setMonthsAgo]         = useState<number>(1);
   const [sinceDate, setSinceDate]         = useState<string>("");
   const [untilDate, setUntilDate]         = useState<string>("");
+  const [sinceTime, setSinceTime]         = useState<string>("");
+  const [untilTime, setUntilTime]         = useState<string>("");
   const [clientName, setClientName]       = useState("");
   const [partnerName, setPartnerName]     = useState("");
   const [clientLogo, setClientLogo]       = useState<string>("");
@@ -94,11 +96,14 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
   };
   const validSince = /^\d{4}-\d{2}-\d{2}$/.test(sinceDate) ? new Date(sinceDate + "T00:00:00") : null;
   const validUntil = /^\d{4}-\d{2}-\d{2}$/.test(untilDate) ? new Date(untilDate + "T00:00:00") : null;
+  const sameDayReversedTimes = sinceDate === untilDate
+    && sinceTime && untilTime && untilTime < sinceTime;
   const customDateError =
     rangeMode !== "custom" ? ""
     : !sinceDate || !untilDate ? "Pick a start and end date."
     : !validSince || !validUntil ? "Dates must be valid (YYYY-MM-DD)."
     : validUntil < validSince ? "The end date can't be before the start date."
+    : sameDayReversedTimes ? "The end time can't be before the start time on the same day."
     : untilDate > todayLocalStr() ? "The end date can't be in the future."
     : Math.round((validUntil.getTime() - validSince.getTime()) / 86400000) + 1 > 366
       ? "Range can't exceed 366 days."
@@ -155,7 +160,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
       accountId: accountId.trim().toLowerCase(),
       days, tzOffset: new Date().getTimezoneOffset(),
       rangeMode,
-      ...(rangeMode === "custom" ? { sinceDate, untilDate } : {}),
+      ...(rangeMode === "custom" ? { sinceDate, untilDate, ...(sinceTime ? { sinceTime } : {}), ...(untilTime ? { untilTime } : {}) } : {}),
       ...(rangeMode === "calendar_month" ? { monthsAgo } : {}),
       product,
       clientName:  clientName.trim()  || undefined,
@@ -476,15 +481,24 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                   )}
                   {rangeMode === "custom" && (
                     <div style={{ marginTop: 8 }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <input
                           type="date"
                           value={sinceDate}
                           max={todayLocalStr()}
                           onChange={(e) => setSinceDate(e.target.value)}
                           className="ar-input"
-                          style={{ flex: 1, cursor: "pointer" }}
+                          style={{ flex: 1, minWidth: 130, cursor: "pointer" }}
                           aria-label="Report period start date"
+                        />
+                        <input
+                          type="time"
+                          value={sinceTime}
+                          onChange={(e) => setSinceTime(e.target.value)}
+                          className="ar-input"
+                          style={{ flex: 0.7, minWidth: 84, cursor: "pointer" }}
+                          aria-label="Report period start time (optional, default 00:00)"
+                          title="Start time — optional, defaults to 00:00"
                         />
                         <span style={{ fontSize: 12, color: "#5d5e65" }}>→</span>
                         <input
@@ -493,15 +507,24 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                           max={todayLocalStr()}
                           onChange={(e) => setUntilDate(e.target.value)}
                           className="ar-input"
-                          style={{ flex: 1, cursor: "pointer" }}
+                          style={{ flex: 1, minWidth: 130, cursor: "pointer" }}
                           aria-label="Report period end date"
+                        />
+                        <input
+                          type="time"
+                          value={untilTime}
+                          onChange={(e) => setUntilTime(e.target.value)}
+                          className="ar-input"
+                          style={{ flex: 0.7, minWidth: 84, cursor: "pointer" }}
+                          aria-label="Report period end time (optional, default 23:59)"
+                          title="End time — optional, defaults to 23:59 (inclusive)"
                         />
                       </div>
                       {customDateError ? (
                         <p style={{ fontSize: 11, color: "#b45309", marginTop: 6, marginBottom: 0 }}>{customDateError}</p>
                       ) : (
                         <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6, marginBottom: 0 }}>
-                          Exact period in your timezone. Daily totals stay accurate for old ranges; fine-grained breakdowns only cover ~30 days back.
+                          Exact period in your timezone; times are optional (default 00:00 → 23:59, end time inclusive). Daily totals stay accurate for old ranges; fine-grained breakdowns only cover ~30 days back.
                         </p>
                       )}
                     </div>
