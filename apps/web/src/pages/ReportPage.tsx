@@ -289,6 +289,16 @@ export default function ReportPage({ data, input, onReset, userEmail }: Props) {
                 <p className="text-cf-navy text-sm font-semibold">{generatedAt}</p>
               </div>
             </div>
+
+            {/* Retention honesty note — set by the backend when the selected
+                period is older than some fine-grained datasets keep (~30
+                days), so empty detail sections never read as a bug. */}
+            {data.meta.rangeNote && (
+              <div className="mt-4 p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2">
+                <AlertCircle size={13} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                <p className="text-[11px] leading-relaxed text-amber-800">{data.meta.rangeNote}</p>
+              </div>
+            )}
           </div>
         </div>
 

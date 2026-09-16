@@ -87,6 +87,7 @@ import {
   fetchAiCrawlerStatusBreakdown,
   fetchAiCrawlerTopPaths,
   fetchAiReferralTraffic,
+  customDateRange,
 } from "../services/cf-graphql";
 import {
   getApiShieldOperations,
@@ -115,9 +116,12 @@ import type { AppSecData, CertificateInfo, WafManagedRule, RateLimitRule } from 
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
-function validateInput(body: unknown): { token: string; zoneId: string; accountId: string; days: number; tzOffset: number; rangeMode: ReportRangeMode } | null {
+function validateInput(body: unknown):
+  | { token: string; zoneId: string; accountId: string; days: number; tzOffset: number; rangeMode: ReportRangeMode; sinceDate?: string; untilDate?: string; monthsAgo?: number }
+  | { error: string }
+  | null {
   if (!body || typeof body !== "object") return null;
-  const { token, zoneId, accountId, days, tzOffset, rangeMode } = body as Record<string, unknown>;
+  const { token, zoneId, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, monthsAgo } = body as Record<string, unknown>;
   if (typeof token !== "string" || !token.trim()) return null;
   if (typeof zoneId !== "string" || !/^[a-f0-9]{32}$/.test(zoneId)) return null;
   if (typeof accountId !== "string" || !/^[a-f0-9]{32}$/.test(accountId)) return null;
@@ -128,8 +132,27 @@ function validateInput(body: unknown): { token: string; zoneId: string; accountI
   // e.g. GMT+7 = -420, GMT-5 = 300. Clamp to ±840 (±14 hours)
   const parsedTz = typeof tzOffset === "number" ? tzOffset : parseInt(String(tzOffset ?? "0"), 10);
   const validTz = isNaN(parsedTz) ? 0 : Math.max(-840, Math.min(840, parsedTz));
-  const validRangeMode: ReportRangeMode = rangeMode === "calendar_month" ? "calendar_month" : "rolling";
-  return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: validRangeMode };
+  const validRangeMode: ReportRangeMode =
+    rangeMode === "calendar_month" ? "calendar_month" :
+    rangeMode === "custom" ? "custom" :
+    "rolling";
+
+  if (validRangeMode === "custom") {
+    if (typeof sinceDate !== "string" || typeof untilDate !== "string")
+      return { error: 'rangeMode "custom" requires sinceDate and untilDate (YYYY-MM-DD, local to tzOffset).' };
+    if (!customDateRange(sinceDate, untilDate, validTz))
+      return { error: `Invalid custom range ${JSON.stringify(sinceDate)} → ${JSON.stringify(untilDate)}: both dates must exist, since ≤ until, until not in the future, span 1–366 days.` };
+    return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "custom", sinceDate, untilDate };
+  }
+
+  if (validRangeMode === "calendar_month") {
+    const parsedMonthsAgo = typeof monthsAgo === "number" ? Math.round(monthsAgo) : parseInt(String(monthsAgo ?? "1"), 10);
+    if (isNaN(parsedMonthsAgo) || parsedMonthsAgo < 1 || parsedMonthsAgo > 12)
+      return { error: "monthsAgo must be an integer 1–12 when rangeMode is calendar_month." };
+    return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "calendar_month", monthsAgo: parsedMonthsAgo };
+  }
+
+  return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "rolling" };
 }
 
 // ─── Transform Helpers ────────────────────────────────────────────────────────
@@ -209,10 +232,11 @@ export async function handleFetchAppsec(c: Context<{ Bindings: Env }>) {
   }
 
   const input = validateInput(body);
-  if (!input) {
+  if (!input || "error" in input) {
     return c.json(
       {
         error:
+          (input && "error" in input && input.error) ||
           "Missing or invalid fields. Required: token (string), zoneId (32-char hex), accountId (32-char hex)",
       },
       400
@@ -232,10 +256,19 @@ export async function generateAppsecData(input: {
   accountId: string;
   days: number;
   tzOffset: number;
-  /** "calendar_month" reports the previous FULL calendar month (28-31 days,
-   *  whichever the month actually has) instead of a fixed rolling window —
-   *  `days` above is ignored in that mode. Defaults to "rolling". */
+  /** "calendar_month" reports a full calendar month (28-31 days, whichever
+   *  the month actually has) instead of a fixed rolling window — `days` above
+   *  is ignored in that mode. "custom" reports an explicit user-selected
+   *  date range (`sinceDate`/`untilDate`, local to tzOffset) — `days` is
+   *  ignored in that mode too. Defaults to "rolling". */
   rangeMode?: ReportRangeMode;
+  /** rangeMode "calendar_month": which month — 1 = last month (default),
+   *  2 = the month before that, etc. (1..12). */
+  monthsAgo?: number;
+  /** rangeMode "custom": first day, YYYY-MM-DD local. */
+  sinceDate?: string;
+  /** rangeMode "custom": last day, YYYY-MM-DD local (inclusive; may be today). */
+  untilDate?: string;
 }): Promise<AppSecData> {
   const { token, zoneId, accountId, tzOffset, rangeMode = "rolling" } = input;
 
@@ -243,14 +276,24 @@ export async function generateAppsecData(input: {
   // 28-31 days) instead of a fixed rolling window ending now — `input.days`
   // is ignored in that mode. `calendarPeriodLabel` (e.g. "August 2026")
   // overrides the default "N-Day" periodLabel further down when set.
-  const dateRange = rangeMode === "calendar_month" ? lastCalendarMonth(tzOffset) : last30Days(input.days, tzOffset);
+  // "custom" reports an explicit user-selected range with the same shape.
+  // All three modes return {since, until, untilQuery, sinceTs, untilTs,
+  // days, periodLabel} so the rest of the pipeline is mode-agnostic.
+  type DatedRange = ReturnType<typeof last30Days>;
+  const dateRange: DatedRange =
+    rangeMode === "calendar_month" ? (lastCalendarMonth(tzOffset, input.monthsAgo ?? 1) as unknown as DatedRange)
+    : rangeMode === "custom"
+      ? ((input.sinceDate && input.untilDate
+          ? customDateRange(input.sinceDate, input.untilDate, tzOffset)
+          : null) ?? last30Days(input.days, tzOffset))
+    : last30Days(input.days, tzOffset);
   const since      = dateRange.since;       // YYYY-MM-DD display start date (local)
   const until      = dateRange.until;       // YYYY-MM-DD display end date — today, or last day of the target month
   const untilQuery = dateRange.untilQuery;  // YYYY-MM-DD for date_lt in httpRequests1dGroups (daily datasets)
   const sinceTs    = dateRange.sinceTs;     // ISO timestamp for datetime_geq in adaptive/hourly queries
   const untilTs    = dateRange.untilTs;     // ISO timestamp for datetime_leq — exact "now", or end of the target month
-  const days       = rangeMode === "calendar_month" ? (dateRange as ReturnType<typeof lastCalendarMonth>).days : input.days;
-  const calendarPeriodLabel = rangeMode === "calendar_month" ? (dateRange as ReturnType<typeof lastCalendarMonth>).periodLabel : undefined;
+  const days       = dateRange.days;
+  const calendarPeriodLabel = dateRange.periodLabel; // e.g. "August 2026" / "Sep 1–15, 2026" / "7-Day"
 
   // Adaptive group date filters — use exact UTC timestamps truncated to date.
   // sinceTs = "now minus N days" as ISO timestamp → convert to YYYY-MM-DD
@@ -1885,7 +1928,15 @@ export async function generateAppsecData(input: {
       until,
       generatedAt: new Date().toISOString(),
       days,
-      periodLabel: calendarPeriodLabel ?? (days === 1 ? "1-Day" : `${days}-Day`),
+      periodLabel: calendarPeriodLabel,
+      // Some zone analytics datasets (adaptive/hourly breakdowns) only keep
+      // roughly the last 30 days. For a custom range reaching further back,
+      // say so up front — those sections record their own upstream errors
+      // and render honest empty states, but without this note a half-empty
+      // older report would read like a bug.
+      ...(Date.parse(sinceTs) < Date.now() - 32 * 24 * 60 * 60 * 1000
+        ? { rangeNote: "This report's period reaches further back than some Cloudflare analytics datasets retain (~30 days for fine-grained breakdowns). Daily totals and time series remain accurate; some per-request detail sections may be empty — each shows its own upstream error, and none of this affects the headline numbers." }
+        : {}),
     },
     summary: {
       totalRequests,

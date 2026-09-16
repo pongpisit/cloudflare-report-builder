@@ -240,7 +240,7 @@ export interface DnsQueryDayData {
 }
 
 export interface AppSecData {
-  meta: { zoneName: string; zoneId: string; accountId: string; since: string; until: string; generatedAt: string; days: number; periodLabel: string };
+  meta: { zoneName: string; zoneId: string; accountId: string; since: string; until: string; generatedAt: string; days: number; periodLabel: string; rangeNote?: string };
   summary: RequestsSummary;
   requestsTimeSeries: DayBucket[];
   wafTimeSeries: WafDayBucket[];
@@ -461,6 +461,12 @@ export interface ReportInput {
   // 28-31 days) instead of a fixed rolling window ending now — `days` is
   // ignored by the backend in that mode. Defaults to "rolling".
   rangeMode?: ReportRangeMode;
+  // "custom" mode: explicit local dates for the report period.
+  sinceDate?: string;   // YYYY-MM-DD (first day, inclusive)
+  untilDate?: string;   // YYYY-MM-DD (last day, inclusive; may be today)
+  // "calendar_month" mode: which month to report — 1 = last month (default),
+  // 2 = the month before that, etc. (1..12).
+  monthsAgo?: number;
   product?: "appsec" | "zero-trust";  // defaults to "appsec"
   // Optional branding (not sent to API)
   clientName?: string;
@@ -742,7 +748,7 @@ export type ScheduleReportType = "appsec" | "zero-trust";
 // "calendar_month" = the previous full calendar month (28-31 days,
 // whichever the month actually has) — fixes monthly-frequency schedules
 // silently drifting off true month boundaries when using days=30.
-export type ReportRangeMode = "rolling" | "calendar_month";
+export type ReportRangeMode = "rolling" | "calendar_month" | "custom";
 
 export interface ScheduleConfig {
   id: string;
@@ -768,6 +774,9 @@ export interface ScheduleConfig {
   lastStatus: string | null;
   lastError: string | null;
   rangeMode: ReportRangeMode;
+  sinceDate: string | null;
+  untilDate: string | null;
+  monthsAgo: number | null;
 }
 
 /** Payload for create/update — everything the dashboard configures. */
@@ -779,6 +788,9 @@ export interface ScheduleInput {
   days: number;
   tzOffset: number;
   rangeMode: ReportRangeMode;
+  sinceDate?: string | null;
+  untilDate?: string | null;
+  monthsAgo?: number | null;
   frequency: ScheduleFrequency;
   dayOfWeek: number | null;
   dayOfMonth: number | null;

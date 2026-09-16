@@ -115,6 +115,9 @@ export function last30Days(days = 30, tzOffset = 0): {
   untilQuery: string;   // YYYY-MM-DD — for date_lt queries (daily granularity) = tomorrow
   sinceTs: string;      // ISO timestamp — for datetime_geq (hourly granularity) = exact "now - N days"
   untilTs: string;      // ISO timestamp — for datetime_leq (hourly granularity) = exact "now"
+  days: number;         // the rolling window length (same field name as the
+                        // other range helpers so pipelines can be mode-agnostic)
+  periodLabel: string;  // e.g. "7-Day" — lowercase "n-day" handled by the AI prompts
 } {
   // UTC "now" — used as the exact end timestamp for hourly queries
   const utcNow = Date.now();
@@ -139,6 +142,8 @@ export function last30Days(days = 30, tzOffset = 0): {
     untilQuery: localTomorrow,  // date_lt (exclusive) for daily datasets
     sinceTs: nDaysAgoTs,        // datetime_geq for hourly/adaptive datasets
     untilTs: nowTs,             // datetime_leq for hourly/adaptive datasets
+    days,
+    periodLabel: days === 1 ? "1-Day" : `${days}-Day`,
   };
 }
 
@@ -207,6 +212,83 @@ export function lastCalendarMonth(tzOffset = 0, monthsAgo = 1): {
     untilTs: new Date(realEndExclusiveUtcMs - 1).toISOString(),
     days,
     periodLabel: `${MONTH_NAMES[targetMonth]} ${targetYear}`,
+  };
+}
+
+// ─── Custom explicit date range ───────────────────────────────────────────────
+/**
+ * customDateRange: an explicit user-selected range (YYYY-MM-DD dates, local
+ * to the caller's timezone) — the "time selector" for interactive reports
+ * and schedules. Returns the same shape as last30Days()/lastCalendarMonth()
+ * so all range modes are interchangeable downstream.
+ *
+ * Validation (returns null on any failure):
+ *   - both dates must be strict YYYY-MM-DD that exist (2026-02-31 rejected)
+ *   - since <= until, and until must not be in the future (local "today" is
+ *     the latest allowed end date — partial-month-so-far is fine)
+ *   - span 1..366 days (inclusive of both endpoints)
+ */
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function customDateRange(sinceDate: string, untilDate: string, tzOffset = 0): {
+  since: string;
+  until: string;
+  untilQuery: string;
+  sinceTs: string;
+  untilTs: string;
+  days: number;
+  periodLabel: string;
+} | null {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const parse = (s: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s ?? "");
+    if (!m) return null;
+    const y = +m[1], mo = +m[2] - 1, d = +m[3];
+    // Reject rolled-over dates (e.g. Feb 31 → Mar 3)
+    const ms = Date.UTC(y, mo, d);
+    const dt = new Date(ms);
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo || dt.getUTCDate() !== d) return null;
+    return { ms, y, mo, d };
+  };
+  const start = parse(sinceDate);
+  const end = parse(untilDate);
+  if (!start || !end) return null;
+
+  const days = Math.round((end.ms - start.ms) / DAY_MS) + 1; // inclusive
+  if (days < 1 || days > 366) return null;
+
+  // until must not be in the future in the caller's local timezone.
+  // Same local-wall-clock trick as last30Days()/lastCalendarMonth().
+  const localNow = new Date(Date.now() - tzOffset * 60 * 1000);
+  const todayMidnightLocalMs = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate());
+  if (end.ms > todayMidnightLocalMs) return null;
+
+  // Real UTC instants: local midnight → UTC via the inverse tz shift.
+  const sinceTsMs = start.ms + tzOffset * 60 * 1000;
+  const endExclusiveTsMs = end.ms + DAY_MS + tzOffset * 60 * 1000;
+
+  // Human label for meta/AI summaries: "Sep 1–15, 2026" / "Aug 30 – Sep 3,
+  // 2026" / "Dec 28, 2025 – Jan 3, 2026" / single day: "Sep 3, 2026".
+  const d = (n: number) => String(n);
+  let periodLabel: string;
+  if (days === 1) {
+    periodLabel = `${MONTH_ABBR[start.mo]} ${d(start.d)}, ${start.y}`;
+  } else if (start.y === end.y && start.mo === end.mo) {
+    periodLabel = `${MONTH_ABBR[start.mo]} ${d(start.d)}–${d(end.d)}, ${start.y}`;
+  } else if (start.y === end.y) {
+    periodLabel = `${MONTH_ABBR[start.mo]} ${d(start.d)} – ${MONTH_ABBR[end.mo]} ${d(end.d)}, ${start.y}`;
+  } else {
+    periodLabel = `${MONTH_ABBR[start.mo]} ${d(start.d)}, ${start.y} – ${MONTH_ABBR[end.mo]} ${d(end.d)}, ${end.y}`;
+  }
+
+  return {
+    since: sinceDate,
+    until: untilDate,
+    untilQuery: new Date(end.ms + DAY_MS).toISOString().split("T")[0],
+    sinceTs: new Date(sinceTsMs).toISOString(),
+    untilTs: new Date(endExclusiveTsMs - 1).toISOString(),
+    days,
+    periodLabel,
   };
 }
 

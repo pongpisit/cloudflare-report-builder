@@ -72,6 +72,9 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
   const [zoneError, setZoneError]         = useState("");
   const [days, setDays]                   = useState<number>(30);
   const [rangeMode, setRangeMode]         = useState<ReportRangeMode>("rolling");
+  const [monthsAgo, setMonthsAgo]         = useState<number>(1);
+  const [sinceDate, setSinceDate]         = useState<string>("");
+  const [untilDate, setUntilDate]         = useState<string>("");
   const [clientName, setClientName]       = useState("");
   const [partnerName, setPartnerName]     = useState("");
   const [clientLogo, setClientLogo]       = useState<string>("");
@@ -83,11 +86,41 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
   const tokenOk      = token.trim().length > 10;
   const accountOk    = isValidHex32(accountId);
   const zoneOk       = isValidHex32(selectedZoneId);
+
+  // Custom-range validation (mirrors the backend's customDateRange()).
+  const todayLocalStr = () => {
+    const n = new Date();
+    return new Date(n.getTime() - n.getTimezoneOffset() * 60000).toISOString().split("T")[0];
+  };
+  const validSince = /^\d{4}-\d{2}-\d{2}$/.test(sinceDate) ? new Date(sinceDate + "T00:00:00") : null;
+  const validUntil = /^\d{4}-\d{2}-\d{2}$/.test(untilDate) ? new Date(untilDate + "T00:00:00") : null;
+  const customDateError =
+    rangeMode !== "custom" ? ""
+    : !sinceDate || !untilDate ? "Pick a start and end date."
+    : !validSince || !validUntil ? "Dates must be valid (YYYY-MM-DD)."
+    : validUntil < validSince ? "The end date can't be before the start date."
+    : untilDate > todayLocalStr() ? "The end date can't be in the future."
+    : Math.round((validUntil.getTime() - validSince.getTime()) / 86400000) + 1 > 366
+      ? "Range can't exceed 366 days."
+      : "";
+  const customDatesOk = rangeMode !== "custom" || customDateError === "";
+
   const canFetchZones = tokenOk && accountOk && !fetchingZones;
-  const canSubmit     = product === "zero-trust"
-    ? tokenOk && accountOk && !loading
-    : tokenOk && accountOk && zoneOk && !loading;
+  const canSubmit = product === "zero-trust"
+    ? tokenOk && accountOk && customDatesOk && !loading
+    : tokenOk && accountOk && zoneOk && customDatesOk && !loading;
   const showConfig    = product === "zero-trust" || (zones.length > 0 && selectedZoneId);
+
+  // Month options for the calendar-month selector: the 12 months before
+  // the current one, labeled with the month the report would actually cover.
+  const MONTH_LABELS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const monthOptions = Array.from({ length: 12 }, (_, i) => {
+    const monthsAgoIdx = i + 1;
+    const d = new Date();
+    d.setDate(1); // avoid month-overflow when shifting (e.g. May 31 - 1 month)
+    d.setMonth(d.getMonth() - monthsAgoIdx);
+    return { value: monthsAgoIdx, label: `${MONTH_LABELS[d.getMonth()]} ${d.getFullYear()}` };
+  });
 
   async function handleFetchZones() {
     setZoneError(""); setZones([]); setSelectedZoneId(""); setFetchingZones(true);
@@ -122,6 +155,8 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
       accountId: accountId.trim().toLowerCase(),
       days, tzOffset: new Date().getTimezoneOffset(),
       rangeMode,
+      ...(rangeMode === "custom" ? { sinceDate, untilDate } : {}),
+      ...(rangeMode === "calendar_month" ? { monthsAgo } : {}),
       product,
       clientName:  clientName.trim()  || undefined,
       partnerName: partnerName.trim() || undefined,
@@ -403,13 +438,73 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                         transition: "all 0.15s",
                         textAlign: "center" as const,
                       }}>
-                      Last Month
+                      Month
+                    </button>
+                    <button type="button" onClick={() => setRangeMode("custom")}
+                      style={{
+                        flex: 1, padding: "13px 8px 11px",
+                        fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                        textTransform: "uppercase" as const, cursor: "pointer",
+                        border: "1px solid",
+                        borderColor: rangeMode === "custom" ? "#ba0816" : "#c4c4c4",
+                        backgroundColor: rangeMode === "custom" ? "#ba0816" : "transparent",
+                        color: rangeMode === "custom" ? "#ffffff" : "#5d5e65",
+                        transition: "all 0.15s",
+                        textAlign: "center" as const,
+                      }}>
+                      Custom
                     </button>
                   </div>
                   {rangeMode === "calendar_month" && (
-                    <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6 }}>
-                      Reports the full previous calendar month (e.g. all of August, whether it has 28, 29, 30, or 31 days) instead of a fixed rolling window.
-                    </p>
+                    <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                      <select
+                        value={monthsAgo}
+                        onChange={(e) => setMonthsAgo(Number(e.target.value))}
+                        className="ar-input"
+                        style={{ appearance: "none", paddingRight: 36, cursor: "pointer", flex: 1 }}
+                      >
+                        {monthOptions.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}{o.value === 1 ? " (last month)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <p style={{ fontSize: 11, color: "#5d5e65", margin: 0, flex: 1.6, lineHeight: 1.5 }}>
+                        Reports that full calendar month (28–31 days) instead of a fixed rolling window.
+                      </p>
+                    </div>
+                  )}
+                  {rangeMode === "custom" && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <input
+                          type="date"
+                          value={sinceDate}
+                          max={todayLocalStr()}
+                          onChange={(e) => setSinceDate(e.target.value)}
+                          className="ar-input"
+                          style={{ flex: 1, cursor: "pointer" }}
+                          aria-label="Report period start date"
+                        />
+                        <span style={{ fontSize: 12, color: "#5d5e65" }}>→</span>
+                        <input
+                          type="date"
+                          value={untilDate}
+                          max={todayLocalStr()}
+                          onChange={(e) => setUntilDate(e.target.value)}
+                          className="ar-input"
+                          style={{ flex: 1, cursor: "pointer" }}
+                          aria-label="Report period end date"
+                        />
+                      </div>
+                      {customDateError ? (
+                        <p style={{ fontSize: 11, color: "#b45309", marginTop: 6, marginBottom: 0 }}>{customDateError}</p>
+                      ) : (
+                        <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6, marginBottom: 0 }}>
+                          Exact period in your timezone. Daily totals stay accurate for old ranges; fine-grained breakdowns only cover ~30 days back.
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

@@ -16,6 +16,7 @@
 import type { Context } from "hono";
 import type { Env, ScheduleRow, ScheduleConfig, ScheduleReportType, ScheduleFrequency, ReportRangeMode } from "../types";
 import { runSchedule } from "../scheduler";
+import { customDateRange } from "../services/cf-graphql";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30];
 const MAX_RECIPIENTS = 50; // Cloudflare Email Sending limit (to + cc + bcc)
@@ -54,6 +55,9 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     lastStatus: row.last_status,
     lastError: row.last_error,
     rangeMode: row.range_mode ?? "rolling",
+    sinceDate: row.since_date ?? null,
+    untilDate: row.until_date ?? null,
+    monthsAgo: row.months_ago ?? null,
   };
 }
 
@@ -77,6 +81,9 @@ interface ValidatedSchedule {
   clientName: string | null;
   enabled: number;
   rangeMode: ReportRangeMode;
+  sinceDate: string | null;
+  untilDate: string | null;
+  monthsAgo: number | null;
 }
 
 function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: string } {
@@ -105,24 +112,46 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
 
   // rangeMode "calendar_month" ignores `days` for the actual date-range math
   // (see lastCalendarMonth() in cf-graphql.ts) — a fixed 30-day rolling
-  // window never lines up with a real month's 28-31 days. `days` is still
-  // stored (a nominal 30) purely so existing UI/history that displays it
-  // has something reasonable to show before a report is actually generated.
-  const rangeMode: ReportRangeMode = b.rangeMode === "calendar_month" ? "calendar_month" : "rolling";
+  // window never lines up with a real month's 28-31 days. "custom" also
+  // ignores `days` (the explicit sinceDate/untilDate drives the range).
+  // `days` is still stored (a nominal 30) purely so existing UI/history
+  // that displays it has something reasonable to show before a report is
+  // actually generated.
+  // Parse tzOffset FIRST — the custom-range validation below needs it to
+  // interpret the dates in the schedule's local timezone.
+  let tzOffset = 0;
+  if (b.tzOffset !== undefined) {
+    if (typeof b.tzOffset !== "number" || !isFinite(b.tzOffset)) return { error: "tzOffset must be a number" };
+    tzOffset = Math.max(-840, Math.min(840, Math.round(b.tzOffset)));
+  }
 
+  const rangeMode: ReportRangeMode =
+    b.rangeMode === "calendar_month" ? "calendar_month"
+    : b.rangeMode === "custom" ? "custom"
+    : "rolling";
+
+  let sinceDate: string | null = null;
+  let untilDate: string | null = null;
+  let monthsAgo: number | null = null;
   let days: number;
-  if (rangeMode === "calendar_month") {
+  if (rangeMode === "custom") {
+    if (typeof b.sinceDate !== "string" || typeof b.untilDate !== "string")
+      return { error: 'rangeMode "custom" requires sinceDate and untilDate (YYYY-MM-DD)' };
+    if (!customDateRange(b.sinceDate, b.untilDate, tzOffset))
+      return { error: "Invalid custom range: both dates must exist (YYYY-MM-DD), since ≤ until, until not in the future, span 1–366 days" };
+    sinceDate = b.sinceDate;
+    untilDate = b.untilDate;
+    days = 30;
+  } else if (rangeMode === "calendar_month") {
+    const parsed = typeof b.monthsAgo === "number" ? Math.round(b.monthsAgo) : parseInt(String(b.monthsAgo ?? "1"), 10);
+    if (isNaN(parsed) || parsed < 1 || parsed > 12)
+      return { error: "monthsAgo must be an integer 1–12 for calendar_month schedules" };
+    monthsAgo = parsed;
     days = 30;
   } else {
     if (typeof b.days !== "number" || !ALLOWED_DAYS.includes(b.days))
       return { error: `days must be one of ${ALLOWED_DAYS.join(", ")}` };
     days = b.days;
-  }
-
-  let tzOffset = 0;
-  if (b.tzOffset !== undefined) {
-    if (typeof b.tzOffset !== "number" || !isFinite(b.tzOffset)) return { error: "tzOffset must be a number" };
-    tzOffset = Math.max(-840, Math.min(840, Math.round(b.tzOffset)));
   }
 
   const frequency = b.frequency;
@@ -179,6 +208,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
       name, reportType, zoneId, zoneName, days, tzOffset, frequency,
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
       isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
+      sinceDate, untilDate, monthsAgo,
     },
   };
 }
@@ -210,14 +240,16 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
     `INSERT INTO schedules
        (id, name, report_type, zone_id, zone_name, days, tz_offset, frequency,
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
-        is_poc, client_name, enabled, created_at, updated_at, range_mode)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        is_poc, client_name, enabled, created_at, updated_at, range_mode,
+        since_date, until_date, months_ago)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
       data.tzOffset, data.frequency, data.dayOfWeek, data.dayOfMonth,
       data.sendHourUtc, data.recipients, data.subject, data.message,
-      data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode
+      data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode,
+      data.sinceDate, data.untilDate, data.monthsAgo
     )
     .run();
 
@@ -245,14 +277,16 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        name = ?, report_type = ?, zone_id = ?, zone_name = ?, days = ?, tz_offset = ?,
        frequency = ?, day_of_week = ?, day_of_month = ?, send_hour_utc = ?,
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
-       enabled = ?, updated_at = ?, range_mode = ?
+       enabled = ?, updated_at = ?, range_mode = ?,
+       since_date = ?, until_date = ?, months_ago = ?
      WHERE id = ?`
   )
     .bind(
       data.name, data.reportType, data.zoneId, data.zoneName, data.days, data.tzOffset,
       data.frequency, data.dayOfWeek, data.dayOfMonth, data.sendHourUtc,
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
-      data.enabled, now, data.rangeMode, id
+      data.enabled, now, data.rangeMode,
+      data.sinceDate, data.untilDate, data.monthsAgo, id
     )
     .run();
 

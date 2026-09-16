@@ -57,6 +57,34 @@ function describeSchedule(s: ScheduleConfig): string {
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** Human description of a schedule's report period, mirroring the backend's
+ *  range math: "last calendar month", "August 2026 (2 months back)",
+ *  "custom: 2026-08-30 → 2026-09-03", or "N-day". */
+function describeRange(s: ScheduleConfig): string {
+  if (s.rangeMode === "custom")
+    return `custom ${s.sinceDate ?? "?"} → ${s.untilDate ?? "?"}`;
+  if (s.rangeMode === "calendar_month") {
+    const back = s.monthsAgo ?? 1;
+    if (back === 1) return "last calendar month";
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - back);
+    return `${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()} (${back} months back)`;
+  }
+  return `${s.days}-day`;
+}
+
+/** Month options for the calendar-month picker: the 12 months before now. */
+function monthOptionsBack(count = 12): { value: number; label: string }[] {
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date();
+    d.setDate(1); // avoid month-overflow when shifting back
+    d.setMonth(d.getMonth() - (i + 1));
+    return { value: i + 1, label: `${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}` };
+  });
+}
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -424,7 +452,7 @@ function ScheduleCard({ schedule: s, busy, onEdit, onDelete, onSendNow, onToggle
               {s.name}
             </h3>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#5d5e65" }}>
-              {describeSchedule(s)} · {s.rangeMode === "calendar_month" ? "last calendar month" : `${s.days}-day`} report
+              {describeSchedule(s)} · {describeRange(s)} report
               {s.reportType === "appsec" && s.zoneName ? ` · ${s.zoneName}` : ""}
             </p>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#5d5e65", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
@@ -504,6 +532,9 @@ function configToInput(s: ScheduleConfig, enabledOverride?: boolean): ScheduleIn
     days: s.days,
     tzOffset: s.tzOffset,
     rangeMode: s.rangeMode,
+    sinceDate: s.sinceDate ?? null,
+    untilDate: s.untilDate ?? null,
+    monthsAgo: s.monthsAgo ?? null,
     frequency: s.frequency,
     dayOfWeek: s.dayOfWeek,
     dayOfMonth: s.dayOfMonth,
@@ -535,6 +566,9 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
   const [zoneName, setZoneName] = useState(initial?.zoneName ?? "");
   const [days, setDays] = useState<number>(initial?.days ?? 30);
   const [rangeMode, setRangeMode] = useState<ReportRangeMode>(initial?.rangeMode ?? "rolling");
+  const [monthsAgo, setMonthsAgo] = useState<number>(initial?.monthsAgo ?? 1);
+  const [sinceDate, setSinceDate] = useState<string>(initial?.sinceDate ?? "");
+  const [untilDate, setUntilDate] = useState<string>(initial?.untilDate ?? "");
   const [frequency, setFrequency] = useState<ScheduleFrequency>(initial?.frequency ?? "weekly");
   const [dayOfWeek, setDayOfWeek] = useState<number>(initial?.dayOfWeek ?? 1);
   const [dayOfMonth, setDayOfMonth] = useState<number>(initial?.dayOfMonth ?? 1);
@@ -553,6 +587,14 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
 
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Local "today" as YYYY-MM-DD for the date inputs' max attribute. The
+  // backend re-validates in the schedule's own timezone and returns a
+  // precise error if the range is out of bounds there.
+  const todayLocalStr = () => {
+    const n = new Date();
+    return new Date(n.getTime() - n.getTimezoneOffset() * 60000).toISOString().split("T")[0];
+  };
 
   function addRecipient(raw: string) {
     // Split pasted lists — "a@x.com, b@y.com; c@z.com" adds all three.
@@ -581,6 +623,17 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
     if (reportType === "appsec" && !zoneId) { setFormError("Select a zone for the App Security report."); return; }
     if (recipients.length === 0) { setFormError("Add at least one recipient email address."); return; }
     if (!subject.trim()) { setFormError("Email subject is required."); return; }
+    if (rangeMode === "custom") {
+      const n = new Date();
+      const todayStr = new Date(n.getTime() - n.getTimezoneOffset() * 60000).toISOString().split("T")[0];
+      const sv = /^\d{4}-\d{2}-\d{2}$/.test(sinceDate) ? new Date(sinceDate + "T00:00:00") : null;
+      const uv = /^\d{4}-\d{2}-\d{2}$/.test(untilDate) ? new Date(untilDate + "T00:00:00") : null;
+      if (!sinceDate || !untilDate) { setFormError("Pick a start and end date for the custom range."); return; }
+      if (!sv || !uv) { setFormError("Custom range dates must be valid (YYYY-MM-DD)."); return; }
+      if (uv < sv) { setFormError("The end date can't be before the start date."); return; }
+      if (untilDate > todayStr) { setFormError("The end date can't be in the future."); return; }
+      if (Math.round((uv.getTime() - sv.getTime()) / 86400000) + 1 > 366) { setFormError("Custom range can't exceed 366 days."); return; }
+    }
 
     const selectedZone = (zones ?? []).find((z) => z.id === zoneId);
     const input: ScheduleInput = {
@@ -591,6 +644,9 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       days,
       tzOffset,
       rangeMode,
+      sinceDate: rangeMode === "custom" ? sinceDate : null,
+      untilDate: rangeMode === "custom" ? untilDate : null,
+      monthsAgo: rangeMode === "calendar_month" ? monthsAgo : null,
       frequency,
       dayOfWeek: frequency === "weekly" ? dayOfWeek : null,
       dayOfMonth: frequency === "monthly" ? dayOfMonth : null,
@@ -731,16 +787,72 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
                 color: rangeMode === "calendar_month" ? "#ffffff" : "#5d5e65",
                 transition: "all 0.15s", textAlign: "center" as const,
               }}>
-              Last Month
+              Month
+            </button>
+            <button type="button" onClick={() => setRangeMode("custom")}
+              style={{
+                flex: 1, padding: "13px 6px 11px",
+                fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                textTransform: "uppercase" as const, cursor: "pointer",
+                border: "1px solid",
+                borderColor: rangeMode === "custom" ? "#ba0816" : "#c4c4c4",
+                backgroundColor: rangeMode === "custom" ? "#ba0816" : "transparent",
+                color: rangeMode === "custom" ? "#ffffff" : "#5d5e65",
+                transition: "all 0.15s", textAlign: "center" as const,
+              }}>
+              Custom
             </button>
           </div>
-          {rangeMode === "calendar_month" ? (
-            <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6 }}>
-              Reports the full previous calendar month (28-31 days, whichever the month has) instead of a fixed rolling window — recommended for monthly-frequency schedules.
-            </p>
-          ) : frequency === "monthly" ? (
+          {rangeMode === "calendar_month" && (
+            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+              <select
+                value={monthsAgo}
+                onChange={(e) => setMonthsAgo(Number(e.target.value))}
+                className="ar-input"
+                style={{ appearance: "none", paddingRight: 36, cursor: "pointer", flex: 1 }}
+              >
+                {monthOptionsBack().map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}{o.value === 1 ? " (last month)" : ""}
+                  </option>
+                ))}
+              </select>
+              <p style={{ fontSize: 11, color: "#5d5e65", margin: 0, flex: 1.6, lineHeight: 1.5 }}>
+                Full calendar month (28–31 days) — recommended for monthly-frequency schedules.
+              </p>
+            </div>
+          )}
+          {rangeMode === "custom" && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input
+                  type="date"
+                  value={sinceDate}
+                  max={todayLocalStr()}
+                  onChange={(e) => setSinceDate(e.target.value)}
+                  className="ar-input"
+                  style={{ flex: 1, cursor: "pointer" }}
+                  aria-label="Report period start date"
+                />
+                <span style={{ fontSize: 12, color: "#5d5e65" }}>→</span>
+                <input
+                  type="date"
+                  value={untilDate}
+                  max={todayLocalStr()}
+                  onChange={(e) => setUntilDate(e.target.value)}
+                  className="ar-input"
+                  style={{ flex: 1, cursor: "pointer" }}
+                  aria-label="Report period end date"
+                />
+              </div>
+              <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6, marginBottom: 0 }}>
+                Exact period in the schedule's timezone ({tzLabel(tzOffset)}). Daily totals stay accurate for old ranges; fine-grained breakdowns only cover ~30 days back.
+              </p>
+            </div>
+          )}
+          {rangeMode === "rolling" && frequency === "monthly" ? (
             <p style={{ fontSize: 11, color: "#b45309", marginTop: 6 }}>
-              A fixed {days}-day window won't line up with every calendar month (28-31 days) — consider "Last Month" above for a true month-to-month report.
+              A fixed {days}-day window won't line up with every calendar month (28-31 days) — consider "Month" above for a true month-to-month report.
             </p>
           ) : null}
         </div>

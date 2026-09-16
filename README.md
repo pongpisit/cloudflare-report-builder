@@ -338,6 +338,8 @@ ADD COLUMN` with defaults):
 | `0005_zt_casb_findings.sql` | `zt_casb_findings` (CASB finding lifecycle) |
 | `0006_zt_alert_tracking.sql` | `zt_alert_tracking` (alert investigation register) |
 | `0007_schedule_range_mode.sql` | `schedules.range_mode` (rolling vs. calendar month) |
+| `0008_schedule_custom_range.sql` | `schedules.since_date`/`until_date` (custom ranges), `months_ago` (explicit month picking) |
+| `0009_schedule_range_mode_custom.sql` | Rebuilds `schedules` to allow `range_mode = 'custom'` (SQLite can't ALTER a CHECK constraint) |
 
 ### 3. Worker build and deploy
 
@@ -580,11 +582,12 @@ recipients, subject, and an optional custom message.
 - **Cadence**: daily / weekly / monthly, evaluated in the schedule's
   captured timezone. A 90-minute grace window after the intended send time
   doubles as catch-up if a cron event is missed.
-- **Timeframe**: a rolling window (1/3/5/7/14/30 days) **or "Last Month"**,
-  which reports the exact previous calendar month with its real day count
-  (28–31) and a proper period label like "August 2026". Prefer this for
-  monthly schedules — a fixed 30-day window silently drifts against real
-  month boundaries.
+- **Timeframe**: a rolling window (1/3/5/7/14/30 days), **any of the last 12
+  calendar months** (with its real 28–31 day count and a proper period label
+  like "August 2026"), or **an exact custom date range** (any start/end
+  dates up to 366 days, interpreted in the schedule's timezone). Prefer a
+  calendar month for monthly schedules — a fixed 30-day window silently
+  drifts against real month boundaries.
 - **Double-send guard**: an atomic `last_run_at` claim (compared against the
   intended occurrence, not wall-clock time) prevents duplicate sends.
 - **"Send test now"**: generates and sends immediately, recorded as a
@@ -643,8 +646,10 @@ All routes are `POST` unless noted. Rate-limited routes are marked ⏱
 | `POST /api/summary` ⏱ | AI executive summary for an AppSec report |
 | `POST /api/zt-summary` ⏱ | AI executive summary for a Zero Trust report |
 
-Report requests accept `{ token, accountId | zoneId, days?, rangeMode?, tzOffset?, isPoc? }`
-where `rangeMode` is `"rolling"` (default) or `"calendar_month"`.
+Report requests accept `{ token, accountId | zoneId, days?, rangeMode?, tzOffset?,
+monthsAgo?, sinceDate?, untilDate?, isPoc? }` where `rangeMode` is `"rolling"`
+(default), `"calendar_month"` (+ optional `monthsAgo` 1–12), or `"custom"`
+(+ `sinceDate`/`untilDate`, local YYYY-MM-DD, inclusive, span 1–366 days).
 
 ### Finding registers (D1-backed lifecycle tracking)
 

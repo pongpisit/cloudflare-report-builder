@@ -14,6 +14,16 @@ export interface Env {
   CF_ACCOUNT_ID: string;
   /** Sender address for scheduled emails — domain must be onboarded to Email Sending */
   EMAIL_FROM: string;
+  /** Optional: Cloudflare Access team domain (e.g. "myteam.cloudflareaccess.com").
+   *  When set together with CF_ACCESS_AUD, /api/* requires a signature-verified
+   *  Cloudflare Access JWT (Cf-Access-Jwt-Assertion header or __CF_Authorization cookie). */
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  /** Optional: this application's Cloudflare Access AUD tag (required with CF_ACCESS_TEAM_DOMAIN). */
+  CF_ACCESS_AUD?: string;
+  /** Optional: server-held bearer secret (npx wrangler secret put MANAGE_SECRET) —
+   *  used as the caller gate when CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD are not configured.
+   *  When none of the three is configured, every /api/* route fails closed with 503. */
+  MANAGE_SECRET?: string;
 }
 
 // ─── Scheduled Reports ────────────────────────────────────────────────────────
@@ -25,7 +35,7 @@ export type ScheduleReportType = "appsec" | "zero-trust";
 // whichever the month actually has) — see lastCalendarMonth() in
 // cf-graphql.ts. Fixes monthly-frequency schedules silently drifting off
 // true month boundaries when using a fixed 30-day rolling window.
-export type ReportRangeMode = "rolling" | "calendar_month";
+export type ReportRangeMode = "rolling" | "calendar_month" | "custom";
 
 /** Raw D1 row from the `schedules` table */
 export interface ScheduleRow {
@@ -52,6 +62,9 @@ export interface ScheduleRow {
   last_status: string | null;
   last_error: string | null;
   range_mode: ReportRangeMode;
+  since_date: string | null;
+  until_date: string | null;
+  months_ago: number | null;
 }
 
 /** Schedule as returned to the dashboard (recipients parsed, booleans coerced) */
@@ -79,6 +92,9 @@ export interface ScheduleConfig {
   lastStatus: string | null;
   lastError: string | null;
   rangeMode: ReportRangeMode;
+  sinceDate: string | null;
+  untilDate: string | null;
+  monthsAgo: number | null;
 }
 
 export interface SendHistoryRow {
@@ -977,8 +993,12 @@ export interface AppSecData extends Record<string, any> {
     since: string;
     until: string;
     generatedAt: string;
-    days: number;        // actual selected period (1,3,5,7,14,30)
-    periodLabel: string; // e.g. "7-Day", "30-Day"
+    days: number;        // actual selected period length in days
+    periodLabel: string; // e.g. "7-Day", "30-Day", "August 2026", "Sep 1-15, 2026"
+    /** Set when the chosen range is older than some upstream datasets
+     *  (see the report's per-section errors / dataConfidence) — explains
+     *  why some sections may be empty so it never reads as a bug. */
+    rangeNote?: string;
   };
 
   summary: RequestsSummary;
