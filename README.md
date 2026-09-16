@@ -587,9 +587,12 @@ recipients, subject, and an optional custom message.
   calendar months** (with its real 28–31 day count and a proper period label
   like "August 2026"), or **an exact custom range** — start/end dates up to
   366 days apart plus optional HH:MM times (e.g. "Sep 1 09:00 → Sep 3
-  17:30"), interpreted in the schedule's timezone. Prefer a calendar month
-  for monthly schedules — a fixed 30-day window silently drifts against
-  real month boundaries.
+  17:30"), interpreted in the schedule's timezone. Every adaptive-dataset
+  section follows the exact window (local days + intra-day bounds); only the
+  `httpRequests1dGroups` sections (daily overview, errors, countries,
+  browsers, content types, status codes) are whole-day by dataset design.
+  Prefer a calendar month for monthly schedules — a fixed 30-day window
+  silently drifts against real month boundaries.
 - **Double-send guard**: an atomic `last_run_at` claim (compared against the
   intended occurrence, not wall-clock time) prevents duplicate sends.
 - **"Send test now"**: generates and sends immediately, recorded as a
@@ -654,6 +657,18 @@ monthsAgo?, sinceDate?, untilDate?, sinceTime?, untilTime?, isPoc? }` where
 1–12), or `"custom"` (+ `sinceDate`/`untilDate`, local YYYY-MM-DD, inclusive,
 span 1–366 days; + optional `sinceTime`/`untilTime`, HH:MM local, defaults
 00:00 / 23:59 with the end minute inclusive).
+
+Every section aligns with that window to the extent its dataset allows:
+request-level breakdowns (TLS key-exchange/PQC, WAF rules/series, bots, AI
+crawlers, API traffic, DNS analytics, top IPs/ASNs/UA fingerprints, … — the
+`*AdaptiveGroups` datasets) filter by the exact `sinceTs`/`untilTs` instants,
+so they honor timezone-shifted local days and intra-day HH:MM bounds. A few
+day-granularity sections (daily overview, error series, countries, browsers,
+content types, status codes — the `httpRequests1dGroups` dataset) cover whole
+selected days, since that dataset is pre-aggregated per day. Cloudflare
+retains adaptive (fine-grained) data only ~30 days back; older ranges keep
+accurate daily totals but per-request sections come back empty (each shows
+its own upstream error).
 
 ### Finding registers (D1-backed lifecycle tracking)
 

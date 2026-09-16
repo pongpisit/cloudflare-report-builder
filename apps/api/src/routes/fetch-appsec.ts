@@ -302,12 +302,13 @@ export async function generateAppsecData(input: {
   const days       = dateRange.days;
   const calendarPeriodLabel = dateRange.periodLabel; // e.g. "August 2026" / "Sep 1–15, 2026" / "7-Day"
 
-  // Adaptive group date filters — use exact UTC timestamps truncated to date.
-  // sinceTs = "now minus N days" as ISO timestamp → convert to YYYY-MM-DD
-  // This gives a more accurate rolling window than (today - N) which truncates to midnight.
-  // e.g. selecting "1 day" at 14:00 → adSince = yesterday's date (not today-1 from midnight)
-  const adSince = sinceTs.split("T")[0];   // YYYY-MM-DD from exact "now - N*24h"
-  const adUntil = untilQuery;              // tomorrow's date (exclusive end, includes today)
+  // Adaptive datasets (httpRequests/firewallEvents/dnsAnalytics AdaptiveGroups)
+  // all take the exact sinceTs/untilTs instants now — every request-level
+  // breakdown follows the selected window precisely (local-day boundaries
+  // and intra-day HH:MM bounds included). Only the 1dGroups datasets
+  // (daily overview, error series, countries, browsers, content types,
+  // status summary) keep date strings — those datasets are pre-aggregated
+  // into whole days and cannot resolve anything finer.
   const errors: Record<string, string> = {};
 
   // ── 1. REST config (parallel) ───────────────────────────────────────────────
@@ -436,77 +437,76 @@ export async function generateAppsecData(input: {
       ? fetchHttpRequestsHourly(token, zoneId, sinceTs, untilTs)
       : fetchHttpRequestsTimeSeries(token, zoneId, since, untilQuery),
     fetchHttpErrorTimeSeries(token, zoneId, since, untilQuery),
-    fetchWafTimeSeries(token, zoneId, since, untilQuery),
-    fetchWafTopRules(token, zoneId, since, untilQuery, 10),
-    fetchWafAttackScoreBreakdown(token, zoneId, since, untilQuery, 20),
-    fetchWafTopCountries(token, zoneId, since, untilQuery, 10),
-    fetchWafTopPaths(token, zoneId, since, untilQuery, 10),
-    fetchBotTimeSeries(token, zoneId, since, untilQuery),
-    fetchCacheStatusBreakdown(token, zoneId, adSince, adUntil),
-    fetchTlsVersionBreakdown(token, zoneId, adSince, adUntil),
-    fetchTlsKeyExchangeBreakdown(token, zoneId, adSince, adUntil),
-    fetchHttpProtocolBreakdown(token, zoneId, adSince, adUntil),
-    fetchDdosTimeSeries(token, zoneId, since, untilQuery),
-    fetchDdosVectors(token, zoneId, since, untilQuery, 10),
+    fetchWafTimeSeries(token, zoneId, sinceTs, untilTs),
+    fetchWafTopRules(token, zoneId, sinceTs, untilTs, 10),
+    fetchWafAttackScoreBreakdown(token, zoneId, sinceTs, untilTs, 20),
+    fetchWafTopCountries(token, zoneId, sinceTs, untilTs, 10),
+    fetchWafTopPaths(token, zoneId, sinceTs, untilTs, 10),
+    fetchBotTimeSeries(token, zoneId, sinceTs, untilTs),
+    fetchCacheStatusBreakdown(token, zoneId, sinceTs, untilTs),
+    fetchTlsVersionBreakdown(token, zoneId, sinceTs, untilTs),
+    fetchTlsKeyExchangeBreakdown(token, zoneId, sinceTs, untilTs),
+    fetchHttpProtocolBreakdown(token, zoneId, sinceTs, untilTs),
+    fetchDdosTimeSeries(token, zoneId, sinceTs, untilTs),
+    fetchDdosVectors(token, zoneId, sinceTs, untilTs, 10),
     // Phase 1
-    fetchCountryDistribution(token, zoneId, adSince, adUntil, 20),
-    fetchBrowserBreakdown(token, zoneId, adSince, adUntil, 10),
-    fetchDeviceBreakdown(token, zoneId, adSince, adUntil),
-    fetchHttpMethodBreakdown(token, zoneId, adSince, adUntil, 10),
+    fetchCountryDistribution(token, zoneId, since, untilQuery, 20),
+    fetchBrowserBreakdown(token, zoneId, since, untilQuery, 10),
+    fetchDeviceBreakdown(token, zoneId, sinceTs, untilTs),
+    fetchHttpMethodBreakdown(token, zoneId, sinceTs, untilTs, 10),
     fetchHttpStatusSummary(token, zoneId, since, untilQuery),
     // Phase 2
-    fetchTtfbTimeSeries(token, zoneId, adSince, adUntil),
-    fetchEdgeColoDistribution(token, zoneId, adSince, adUntil, 15),
+    fetchTtfbTimeSeries(token, zoneId, sinceTs, untilTs),
+    fetchEdgeColoDistribution(token, zoneId, sinceTs, untilTs, 15),
     // Phase 3
-    fetchTopThreatIps(token, zoneId, adSince, adUntil, 20),
-    fetchTopThreatAsns(token, zoneId, adSince, adUntil, 10),
-    fetchTopUserAgents(token, zoneId, adSince, adUntil, 15),
+    fetchTopThreatIps(token, zoneId, sinceTs, untilTs, 20),
+    fetchTopThreatAsns(token, zoneId, sinceTs, untilTs, 10),
+    fetchTopUserAgents(token, zoneId, sinceTs, untilTs, 15),
     // Phase 4
-    fetchContentTypeBreakdown(token, zoneId, adSince, adUntil, 15),
+    fetchContentTypeBreakdown(token, zoneId, since, untilQuery, 15),
     // Phase 5
-    fetchTopReferrers(token, zoneId, adSince, adUntil, 20),
-    fetchTopHttpHostnames(token, zoneId, adSince, adUntil, 50),
+    fetchTopReferrers(token, zoneId, sinceTs, untilTs, 20),
+    fetchTopHttpHostnames(token, zoneId, sinceTs, untilTs, 50),
     // DNS
     fetchDnsRecordSummary(token, zoneId),
-    fetchDnsQueryTypeBreakdown(token, accountId, zoneId, since, untilQuery, 15),
-    fetchDnsQueryTimeSeries(token, accountId, zoneId, since, untilQuery),
-    fetchTopDnsHostnames(token, accountId, zoneId, since, untilQuery, 30),
+    fetchDnsQueryTypeBreakdown(token, accountId, zoneId, sinceTs, untilTs, 15),
+    fetchDnsQueryTimeSeries(token, accountId, zoneId, sinceTs, untilTs),
+    fetchTopDnsHostnames(token, accountId, zoneId, sinceTs, untilTs, 30),
     // Enterprise POC
-    fetchWafScoreAllTraffic(token, zoneId, adSince, adUntil),
-    fetchSecurityEventsByService(token, zoneId, adSince, adUntil, 30),
-    fetchVerifiedBotCategories(token, zoneId, adSince, adUntil, 20),
+    fetchWafScoreAllTraffic(token, zoneId, sinceTs, untilTs),
+    fetchSecurityEventsByService(token, zoneId, sinceTs, untilTs, 30),
+    fetchVerifiedBotCategories(token, zoneId, sinceTs, untilTs, 20),
     // Dashboard parity
-    fetchSourceBrowsers(token, zoneId, adSince, adUntil, 10),
-    fetchSourceOs(token, zoneId, adSince, adUntil, 10),
-    fetchJa3Fingerprints(token, zoneId, adSince, adUntil, 10),
-    fetchJa4Fingerprints(token, zoneId, adSince, adUntil, 10),
-    fetchSourceAsns(token, zoneId, adSince, adUntil, 10),
+    fetchSourceBrowsers(token, zoneId, sinceTs, untilTs, 10),
+    fetchSourceOs(token, zoneId, sinceTs, untilTs, 10),
+    fetchJa3Fingerprints(token, zoneId, sinceTs, untilTs, 10),
+    fetchJa4Fingerprints(token, zoneId, sinceTs, untilTs, 10),
+    fetchSourceAsns(token, zoneId, sinceTs, untilTs, 10),
     // New dashboard-parity queries — use exact UTC timestamps (matches dashboard ZapSparkline)
-    fetchTopClientIps(token, zoneId, adSince, adUntil, 25),
-    fetchTopXRequestedWith(token, zoneId, adSince, adUntil, 10),
+    fetchTopClientIps(token, zoneId, sinceTs, untilTs, 25),
+    fetchTopXRequestedWith(token, zoneId, sinceTs, untilTs, 10),
     fetchDashboardSparklines(token, zoneId, sinceTs, untilTs),
     // API Shield / API traffic analytics
-    fetchApiTrafficTimeSeries(token, zoneId, adSince, adUntil),
-    fetchApiTopPaths(token, zoneId, adSince, adUntil, 15),
-    fetchApiMethodBreakdown(token, zoneId, adSince, adUntil),
-    fetchApiStatusBreakdown(token, zoneId, adSince, adUntil),
+    fetchApiTrafficTimeSeries(token, zoneId, sinceTs, untilTs),
+    fetchApiTopPaths(token, zoneId, sinceTs, untilTs, 15),
+    fetchApiMethodBreakdown(token, zoneId, sinceTs, untilTs),
+    fetchApiStatusBreakdown(token, zoneId, sinceTs, untilTs),
     getApiShieldOperations(token, zoneId, 25),
     getApiShieldSchemas(token, zoneId),
     getApiShieldJwtConfigs(token, zoneId),
     // Least-trafficked operations — zombie API candidates (sort=asc)
     getLowTrafficOperations(token, zoneId, 50),
     // Endpoint Labeling Service — risk labels (zombie/auth/BOLA/sensitive) + business-function labels (login/signup/purchase/etc.)
-    // NOTE: fetchWebAssetLabels' query uses datetime_geq/datetime_leq (per
-    // Cloudflare's own documented example), which requires full ISO8601
-    // timestamps — NOT the date-only adSince/adUntil strings used elsewhere.
-    // Passing date-only strings here was the exact root cause of this query
-    // always throwing "not an iso8601 time" (previously hidden by the
-    // function's own try/catch before that was removed for error visibility).
+    // NOTE: fetchWebAssetLabels (like every adaptive-dataset query in this
+    // pipeline) uses datetime_geq/datetime_leq, which require full ISO8601
+    // timestamps — passing date-only strings was the exact root cause of
+    // this query always throwing "not an iso8601 time" (previously hidden by
+    // the function's own try/catch before that was removed for visibility).
     fetchWebAssetLabels(token, zoneId, sinceTs, untilTs),
     // New intelligence queries (from cf-reporting patterns)
-    fetchWafAttackClassification(token, zoneId, since, untilQuery, managedRuleCategoriesMap),
-    fetchWafRuleEffectiveness(token, zoneId, since, untilQuery, 15),
-    fetchNxdomainHotspots(token, accountId, zoneId, since, untilQuery, 15),
+    fetchWafAttackClassification(token, zoneId, sinceTs, untilTs, managedRuleCategoriesMap),
+    fetchWafRuleEffectiveness(token, zoneId, sinceTs, untilTs, 15),
+    fetchNxdomainHotspots(token, accountId, zoneId, sinceTs, untilTs, 15),
     // API Shield — authoritative label counts (matches dashboard Web Assets numbers,
     // independent of the traffic query window — see getApiShieldLabels() docs)
     getApiShieldLabels(token, zoneId),
@@ -529,11 +529,11 @@ export async function generateAppsecData(input: {
     fetchContentScanResults(token, zoneId, sinceTs, untilTs),
     // AI Crawler analytics — user-agent based detection (works on all plans,
     // matches Cloudflare's own AI Crawl Control GraphQL API documentation)
-    fetchAiCrawlerTimeSeries(token, zoneId, adSince, adUntil),
-    fetchAiCrawlerBots(token, zoneId, adSince, adUntil, 100),
-    fetchAiCrawlerStatusBreakdown(token, zoneId, adSince, adUntil),
-    fetchAiCrawlerTopPaths(token, zoneId, adSince, adUntil, 15),
-    fetchAiReferralTraffic(token, zoneId, adSince, adUntil),
+    fetchAiCrawlerTimeSeries(token, zoneId, sinceTs, untilTs),
+    fetchAiCrawlerBots(token, zoneId, sinceTs, untilTs, 100),
+    fetchAiCrawlerStatusBreakdown(token, zoneId, sinceTs, untilTs),
+    fetchAiCrawlerTopPaths(token, zoneId, sinceTs, untilTs, 15),
+    fetchAiReferralTraffic(token, zoneId, sinceTs, untilTs),
   ]);
 
   const safeGet = <T>(r: PromiseSettledResult<T>, key: string, fallback: T): T => {

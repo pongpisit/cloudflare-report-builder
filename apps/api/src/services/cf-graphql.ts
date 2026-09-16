@@ -62,6 +62,25 @@ export function buildDateFilter(since: string, until: string): Record<string, st
   return { date_geq: since, date_lt: until };
 }
 
+/**
+ * Like buildDateFilter(), but returns the inline GraphQL filter TEXT for
+ * embedding directly into a query template literal:
+ *   filter: { ${rangeFilterClause(since)}, ...otherConditions }
+ *
+ * Adaptive datasets (httpRequestsAdaptiveGroups, firewallEventsAdaptiveGroups,
+ * dnsAnalyticsAdaptiveGroups, …) accept BOTH filter families, and the field
+ * must match the value format — Cloudflare rejects date-only strings in
+ * datetime filters ("not an iso8601 time"). Callers that know the exact
+ * window pass sinceTs/untilTs and get the real range (timezone-shifted local
+ * days and intra-day bounds included); callers that only know the day keep
+ * passing YYYY-MM-DD and get the original UTC-day semantics.
+ */
+export function rangeFilterClause(since: string): string {
+  return since.includes("T")
+    ? "datetime_geq: $since, datetime_leq: $until"
+    : "date_geq: $since, date_lt: $until";
+}
+
 /** Like gql() but extracts from data.viewer.accounts[0] (account-level datasets). */
 async function gqlAccount<T = unknown>(
   token: string,
@@ -556,7 +575,7 @@ export async function fetchWafTimeSeries(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: 200
-            filter: { date_geq: $since, date_lt: $until }
+            filter: { ${rangeFilterClause(since)} }
             orderBy: [date_ASC]
           ) {
             dimensions { date action }
@@ -616,7 +635,7 @@ export async function fetchWafTopRules(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, action_neq: "allow" }
+            filter: { ${rangeFilterClause(since)}, action_neq: "allow" }
             orderBy: [count_DESC]
           ) {
             dimensions { ruleId source action description rulesetId kind }
@@ -674,7 +693,7 @@ export async function fetchWafAttackScoreBreakdown(
           firewallEventsAdaptiveGroups(
             limit: $limit
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               wafAttackScoreClass_neq: "clean"
             }
             orderBy: [count_DESC]
@@ -722,7 +741,7 @@ export async function fetchWafTopCountries(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, action_neq: "allow" }
+            filter: { ${rangeFilterClause(since)}, action_neq: "allow" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientCountryName action }
@@ -770,7 +789,7 @@ export async function fetchWafTopPaths(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, action_neq: "allow" }
+            filter: { ${rangeFilterClause(since)}, action_neq: "allow" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientRequestHTTPHost clientRequestPath action }
@@ -835,7 +854,7 @@ export async function fetchBotTimeSeries(
           httpRequestsAdaptiveGroups(
             limit: 31
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               requestSource: "eyeball",
               botScore_geq: ${scoreGte}, botScore_leq: ${scoreLte}
             }
@@ -906,7 +925,7 @@ export async function fetchCacheStatusBreakdown(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: 20
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { cacheStatus }
@@ -954,7 +973,7 @@ export async function fetchTlsVersionBreakdown(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: 10
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientSSLProtocol }
@@ -1027,7 +1046,7 @@ export async function fetchTlsKeyExchangeBreakdown(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: 20
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientTLSKeyExchangeGroup }
@@ -1076,7 +1095,7 @@ export async function fetchHttpProtocolBreakdown(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: 10
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientRequestHTTPProtocol }
@@ -1131,7 +1150,7 @@ export async function fetchDdosTimeSeries(
           firewallEventsAdaptiveGroups(
             limit: 31
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               source: "l7ddos"
             }
             orderBy: [date_ASC]
@@ -1179,7 +1198,7 @@ export async function fetchDdosVectors(
           firewallEventsAdaptiveGroups(
             limit: $limit
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               source: "l7ddos"
             }
             orderBy: [count_DESC]
@@ -1401,7 +1420,7 @@ export async function fetchDeviceBreakdown(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: 5
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientDeviceType }
@@ -1449,7 +1468,7 @@ export async function fetchHttpMethodBreakdown(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientRequestHTTPMethodName }
@@ -1581,7 +1600,7 @@ export async function fetchTtfbTimeSeries(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: 31
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [date_ASC]
           ) {
             dimensions { date }
@@ -1640,7 +1659,7 @@ export async function fetchEdgeColoDistribution(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [sum_edgeResponseBytes_DESC]
           ) {
             dimensions { coloCode }
@@ -1697,7 +1716,7 @@ export async function fetchTopThreatIps(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, action_neq: "allow" }
+            filter: { ${rangeFilterClause(since)}, action_neq: "allow" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientIP clientCountryName action }
@@ -1746,7 +1765,7 @@ export async function fetchTopThreatAsns(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, action_neq: "allow" }
+            filter: { ${rangeFilterClause(since)}, action_neq: "allow" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientAsn clientASNDescription }
@@ -1805,7 +1824,7 @@ export async function fetchTopUserAgents(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, action_neq: "allow" }
+            filter: { ${rangeFilterClause(since)}, action_neq: "allow" }
             orderBy: [count_DESC]
           ) {
             dimensions { userAgent }
@@ -1987,7 +2006,7 @@ export async function fetchTopReferrers(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientRefererHost }
@@ -2079,6 +2098,41 @@ export interface DnsQueryTypeRow {
   p99Us: number;
 }
 
+/**
+ * dnsAnalyticsAdaptiveGroups follows the Analytics TimeFilter convention
+ * (its schema has a `datetime` field, so datetime_geq/leq should be legal),
+ * but it is the one adaptive dataset in this pipeline without a production
+ * datetime-filter example to prove it. Guard the exact-window path: if the
+ * datetime-filtered query is rejected with a schema/validation error, retry
+ * once with UTC-day bounds derived from the exact window (date fields reject
+ * full timestamps) and warn — visible in wrangler tail — instead of losing
+ * the section. Any other error (auth, HTTP, rate limit) propagates as-is.
+ */
+async function gqlDnsExact<T>(
+  run: (query: string, vars: Record<string, unknown>) => Promise<T>,
+  buildQuery: (timeFilter: string) => string,
+  vars: Record<string, unknown>,
+  since: string
+): Promise<T> {
+  try {
+    return await run(buildQuery(rangeFilterClause(since)), vars);
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e);
+    if (since.includes("T") && /iso8601|cannot query|unknown|not support/i.test(msg)) {
+      console.warn(
+        `dnsAnalyticsAdaptiveGroups rejected datetime filters (${msg.slice(0, 160)}) — retrying with day bounds`
+      );
+      const dayVars = {
+        ...vars,
+        since: since.slice(0, 10),
+        until: new Date(Date.parse(vars.until as string) + 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+      };
+      return await run(buildQuery("date_geq: $since, date_lt: $until"), dayVars);
+    }
+    throw e;
+  }
+}
+
 export async function fetchDnsQueryTypeBreakdown(
   token: string,
   accountId: string,
@@ -2087,13 +2141,13 @@ export async function fetchDnsQueryTypeBreakdown(
   until: string,
   limit = 15
 ): Promise<DnsQueryTypeRow[]> {
-  const query = `
+  const buildQuery = (timeFilter: string) => `
     query DnsQueryTypes($accountTag: string!, $since: string!, $until: string!, $zoneTag: string!, $limit: int!) {
       viewer {
         accounts(filter: { accountTag: $accountTag }) {
           dnsAnalyticsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, zoneTag: $zoneTag }
+            filter: { ${timeFilter}, zoneTag: $zoneTag }
             orderBy: [count_DESC]
           ) {
             dimensions { queryType responseCode }
@@ -2105,13 +2159,13 @@ export async function fetchDnsQueryTypeBreakdown(
     }
   `;
 
-  const data = await gqlAccount<{
+  const data = await gqlDnsExact<{
     dnsAnalyticsAdaptiveGroups: Array<{
       dimensions: { queryType: string; responseCode: string };
       quantiles: { processingTimeUsP50: number; processingTimeUsP95: number; processingTimeUsP99: number };
       count: number;
     }>;
-  }>(token, query, { accountTag: accountId, since, until, zoneTag: zoneId, limit });
+  }>((query: string, vars: Record<string, unknown>) => gqlAccount(token, query, vars), buildQuery, { accountTag: accountId, since, until, zoneTag: zoneId, limit }, since);
 
   return (data.dnsAnalyticsAdaptiveGroups ?? []).map((r) => ({
     queryType: r.dimensions.queryType,
@@ -2139,13 +2193,13 @@ export async function fetchDnsQueryTimeSeries(
   since: string,
   until: string
 ): Promise<DnsQueryDaySeries[]> {
-  const query = `
+  const buildQuery = (timeFilter: string) => `
     query DnsQueryTimeSeries($accountTag: string!, $since: string!, $until: string!, $zoneTag: string!) {
       viewer {
         accounts(filter: { accountTag: $accountTag }) {
           dnsAnalyticsAdaptiveGroups(
             limit: 31
-            filter: { date_geq: $since, date_lt: $until, zoneTag: $zoneTag }
+            filter: { ${timeFilter}, zoneTag: $zoneTag }
             orderBy: [date_ASC]
           ) {
             dimensions { date }
@@ -2157,13 +2211,13 @@ export async function fetchDnsQueryTimeSeries(
     }
   `;
 
-  const data = await gqlAccount<{
+  const data = await gqlDnsExact<{
     dnsAnalyticsAdaptiveGroups: Array<{
       dimensions: { date: string };
       quantiles: { processingTimeUsP50: number; processingTimeUsP95: number };
       count: number;
     }>;
-  }>(token, query, { accountTag: accountId, since, until, zoneTag: zoneId });
+  }>((query: string, vars: Record<string, unknown>) => gqlAccount(token, query, vars), buildQuery, { accountTag: accountId, since, until, zoneTag: zoneId }, since);
 
   return (data.dnsAnalyticsAdaptiveGroups ?? []).map((r) => ({
     date: r.dimensions.date,
@@ -2200,7 +2254,7 @@ export async function fetchTopHttpHostnames(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientRequestHTTPHost }
@@ -2256,13 +2310,13 @@ export async function fetchTopDnsHostnames(
   until: string,
   limit = 30  // fetch 30 and let caller pick top 10 after dedup
 ): Promise<DnsTopHostnameRow[]> {
-  const query = `
+  const buildQuery = (timeFilter: string) => `
     query TopDnsHostnames($accountTag: string!, $since: string!, $until: string!, $zoneTag: string!, $limit: int!) {
       viewer {
         accounts(filter: { accountTag: $accountTag }) {
           dnsAnalyticsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, zoneTag: $zoneTag }
+            filter: { ${timeFilter}, zoneTag: $zoneTag }
             orderBy: [count_DESC]
           ) {
             dimensions { queryName queryType }
@@ -2274,12 +2328,12 @@ export async function fetchTopDnsHostnames(
   `;
 
   try {
-    const data = await gqlAccount<{
+    const data = await gqlDnsExact<{
       dnsAnalyticsAdaptiveGroups: Array<{
         dimensions: { queryName: string; queryType: string };
         count: number;
       }>;
-    }>(token, query, { accountTag: accountId, since, until, zoneTag: zoneId, limit });
+    }>((query: string, vars: Record<string, unknown>) => gqlAccount(token, query, vars), buildQuery, { accountTag: accountId, since, until, zoneTag: zoneId, limit }, since);
 
     return (data.dnsAnalyticsAdaptiveGroups ?? []).map((r) => ({
       hostname: (r.dimensions.queryName ?? "").replace(/\.$/, "").toLowerCase(),
@@ -2320,7 +2374,7 @@ export async function fetchWafScoreAllTraffic(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: 10
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { wafAttackScoreClass }
@@ -2376,7 +2430,7 @@ export async function fetchSecurityEventsByService(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until }
+            filter: { ${rangeFilterClause(since)} }
             orderBy: [count_DESC]
           ) {
             dimensions { source action }
@@ -2433,7 +2487,7 @@ export async function fetchVerifiedBotCategories(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { verifiedBotCategory }
@@ -2482,7 +2536,7 @@ export async function fetchSourceBrowsers(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { userAgentBrowser }
@@ -2525,7 +2579,7 @@ export async function fetchSourceOs(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { userAgentOS }
@@ -2568,7 +2622,7 @@ export async function fetchJa3Fingerprints(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { ja3Hash }
@@ -2611,7 +2665,7 @@ export async function fetchJa4Fingerprints(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { ja4 }
@@ -2795,7 +2849,7 @@ export async function fetchTopClientIps(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientIP }
@@ -2852,7 +2906,7 @@ export async function fetchTopXRequestedWith(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { xRequestedWith }
@@ -2960,7 +3014,7 @@ export async function fetchSourceAsns(
         zones(filter: { zoneTag: $zoneTag }) {
           httpRequestsAdaptiveGroups(
             limit: $limit
-            filter: { date_geq: $since, date_lt: $until, requestSource: "eyeball" }
+            filter: { ${rangeFilterClause(since)}, requestSource: "eyeball" }
             orderBy: [count_DESC]
           ) {
             dimensions { clientAsn clientAsnDescription }
@@ -3015,7 +3069,7 @@ export async function fetchApiTrafficTimeSeries(
             limit: 31
             filter: {
               AND: [
-                { date_geq: $since, date_lt: $until },
+                { ${rangeFilterClause(since)} },
                 { requestSource: "eyeball" },
                 { OR: [
                   { edgeResponseContentTypeName: "json" },
@@ -3064,7 +3118,7 @@ export async function fetchApiTopPaths(
             limit: $limit
             filter: {
               AND: [
-                { date_geq: $since, date_lt: $until },
+                { ${rangeFilterClause(since)} },
                 { requestSource: "eyeball" },
                 { OR: [
                   { edgeResponseContentTypeName: "json" },
@@ -3116,7 +3170,7 @@ export async function fetchApiMethodBreakdown(
             limit: 10
             filter: {
               AND: [
-                { date_geq: $since, date_lt: $until },
+                { ${rangeFilterClause(since)} },
                 { requestSource: "eyeball" },
                 { OR: [
                   { edgeResponseContentTypeName: "json" },
@@ -3242,7 +3296,7 @@ export async function fetchWafAttackClassification(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: 200
-            filter: { date_geq: $since, date_lt: $until, action: "block" }
+            filter: { ${rangeFilterClause(since)}, action: "block" }
             orderBy: [count_DESC]
           ) {
             count
@@ -3657,7 +3711,7 @@ export async function fetchWafRuleEffectiveness(
         zones(filter: { zoneTag: $zoneTag }) {
           firewallEventsAdaptiveGroups(
             limit: 500
-            filter: { date_geq: $since, date_lt: $until }
+            filter: { ${rangeFilterClause(since)} }
             orderBy: [count_DESC]
           ) {
             count
@@ -3722,16 +3776,17 @@ export interface NxdomainHotspot {
 export async function fetchNxdomainHotspots(
   token: string, accountId: string, zoneId: string, since: string, until: string, limit = 15
 ): Promise<NxdomainHotspot[]> {
-  // dnsAnalyticsAdaptiveGroups requires both accountId (for account filter) and zoneTag
-  const query = `
-    query NxdomainHotspots($zoneTag: string!, $since: Date!, $until: Date!, $limit: int!) {
+  // dnsAnalyticsAdaptiveGroups requires both accountId (for account filter) and zoneTag.
+  // `string` variables coerce to Date for date filters and to Time for
+  // datetime filters — matches the declaration style of the other adaptive queries.
+  const buildQuery = (timeFilter: string) => `
+    query NxdomainHotspots($zoneTag: string!, $since: string!, $until: string!, $limit: int!) {
       viewer {
         zones(filter: { zoneTag: $zoneTag }) {
           dnsAnalyticsAdaptiveGroups(
             limit: $limit
             filter: {
-              date_geq: $since
-              date_lt: $until
+              ${timeFilter}
               responseCode: "NXDOMAIN"
             }
             orderBy: [count_DESC]
@@ -3744,12 +3799,12 @@ export async function fetchNxdomainHotspots(
     }
   `;
   try {
-    const data = await gql<{
+    const data = await gqlDnsExact<{
       dnsAnalyticsAdaptiveGroups: Array<{
         count: number;
         dimensions: { queryName: string };
       }>;
-    }>(token, query, { zoneTag: zoneId, since, until, limit });
+    }>((query: string, vars: Record<string, unknown>) => gql(token, query, vars), buildQuery, { zoneTag: zoneId, since, until, limit }, since);
 
     return (data.dnsAnalyticsAdaptiveGroups ?? [])
       .filter((r) => r.dimensions.queryName)
@@ -3770,7 +3825,7 @@ export async function fetchApiStatusBreakdown(
             limit: 20
             filter: {
               AND: [
-                { date_geq: $since, date_lt: $until },
+                { ${rangeFilterClause(since)} },
                 { requestSource: "eyeball" },
                 { OR: [
                   { edgeResponseContentTypeName: "json" },
@@ -3857,7 +3912,7 @@ export async function fetchAiCrawlerTimeSeries(
           httpRequestsAdaptiveGroups(
             limit: 5000
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               requestSource: "eyeball",
               OR: ${aiUserAgentOrFilterLiteral()}
             }
@@ -3918,7 +3973,7 @@ export async function fetchAiCrawlerBots(
           httpRequestsAdaptiveGroups(
             limit: $limit
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               requestSource: "eyeball",
               OR: ${aiUserAgentOrFilterLiteral()}
             }
@@ -3992,7 +4047,7 @@ export async function fetchAiCrawlerStatusBreakdown(
           httpRequestsAdaptiveGroups(
             limit: 100
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               requestSource: "eyeball",
               OR: ${aiUserAgentOrFilterLiteral()}
             }
@@ -4042,7 +4097,7 @@ export async function fetchAiCrawlerTopPaths(
           httpRequestsAdaptiveGroups(
             limit: $limit
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               requestSource: "eyeball",
               OR: ${aiUserAgentOrFilterLiteral()}
             }
@@ -4100,7 +4155,7 @@ export async function fetchAiReferralTraffic(
           httpRequestsAdaptiveGroups(
             limit: 5000
             filter: {
-              date_geq: $since, date_lt: $until,
+              ${rangeFilterClause(since)},
               requestSource: "eyeball",
               OR: ${aiRefererOrFilterLiteral()}
             }

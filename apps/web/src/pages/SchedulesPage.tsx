@@ -877,7 +877,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
                 />
               </div>
               <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6, marginBottom: 0 }}>
-                Exact period in the schedule's timezone ({tzLabel(tzOffset)}); times are optional (default 00:00 → 23:59, end inclusive). Daily totals stay accurate for old ranges; fine-grained breakdowns only cover ~30 days back.
+                Exact period in the schedule's timezone ({tzLabel(tzOffset)}); times are optional (default 00:00 → 23:59, end inclusive). Request-level breakdowns (TLS/PQC, WAF, bots, AI crawlers, DNS analytics, top IPs/ASNs…) follow the exact window; a few day-granularity charts (daily overview, errors, countries, browsers, content types, status codes) cover whole days. Fine-grained data only reaches ~30 days back.
               </p>
             </div>
           )}
