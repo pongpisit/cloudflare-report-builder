@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import type { ZeroTrustData, ReportInput } from "../types";
 import { saveToPdf, saveToHtml, captureReportHtml } from "../utils/pdf-export";
-import { saveAuditReport } from "../services/api";
+import { saveAuditReport, apiFetch } from "../services/api";
 
 // ── ZT Sections ──────────────────────────────────────────────────────────────
 import ZTOverviewSection         from "./zt-sections/ZTOverviewSection";
@@ -44,8 +44,7 @@ import CoverGraphic              from "../components/CoverGraphic";
 
 // AI summary for ZT
 async function fetchZTSummary(zt: ZeroTrustData, isPoc = true): Promise<string> {
-  const API_BASE = import.meta.env.VITE_API_URL ?? "";
-  const res = await fetch(`${API_BASE}/api/zt-summary`, {
+  const res = await apiFetch("/api/zt-summary", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ zerotrust: zt, isPoc }),

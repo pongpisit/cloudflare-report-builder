@@ -509,6 +509,16 @@ without them (that section just shows an honest empty state).
   `Cf-Access-Authenticated-User-Email` header / `CF_Authorization` JWT cookie
   if Access is configured, purely for attribution in the audit archive — it
   is **not** an authorization check.
+- **Access session expiry is handled gracefully**: a `fetch()` redirected to
+  the Access login page can never complete the login (the login page is
+  cross-origin and sends no CORS headers — the browser blocks it, which
+  otherwise surfaces as a cryptic CORS console error). The frontend issues
+  API requests with `redirect: "manual"`, detects the opaque-redirect
+  response, and reloads the page exactly once per tab to re-authenticate —
+  a top-level navigation is the only way to complete an Access login. A
+  `sessionStorage` guard prevents a reload loop; after one attempt the UI
+  shows an explicit "session has expired" error instead. See
+  `apps/web/src/services/access-reauth.ts`.
 - **Rate limiting**: the expensive routes (`/api/appsec`, `/api/zerotrust`,
   `/api/summary`, `/api/zt-summary`, `/api/schedules/:id/send`,
   `/api/settings/test`) are capped at **50 requests / 5 minutes per source
@@ -768,6 +778,7 @@ Live/browser E2E tests need real credentials in `.env.test` (copy from
 | A report section is empty | Usually a missing optional token permission — check the [permission tables](#cloudflare-api-token-permissions). Empty states are deliberate, never faked |
 | DNS breakdown charts empty on a "Last Month" report | Expected: Cloudflare's DNS breakdown GraphQL dataset only retains ~4 weeks. Headline DNS totals are still accurate. See the `dataConfidence` note in the report |
 | Scheduled reports never send | Check `CF_API_TOKEN` (or Settings), `CF_ACCOUNT_ID`, `EMAIL_FROM`, that the sending domain is onboarded, and the schedule's run history for the recorded error |
+| API calls fail with a CORS error mentioning `cloudflareaccess.com` | Your Cloudflare Access session expired. A `fetch()` can't complete an Access login, so the app detects the redirect and reloads the page once to re-authenticate automatically; after that it shows an explicit "session has expired" error. If it persists, log in again in a fresh tab |
 | `wrangler dev` ignores my D1 database | `npm run dev:api` reads `wrangler.toml`. Use `npx wrangler dev --config wrangler.local.toml` |
 | Deploy fails on missing `database_id` | Run `npx wrangler d1 create poc-report-schedules` and put the ID in `wrangler.local.toml` |
 | TypeScript doesn't know a new binding | Run `npm run cf-typegen` to regenerate `worker-configuration.d.ts` |

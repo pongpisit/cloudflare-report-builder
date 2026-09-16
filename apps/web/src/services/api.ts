@@ -12,8 +12,35 @@ import type {
 // In dev, Vite's proxy (vite.config.ts) forwards /api → wrangler dev on :8787.
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
+import { noteAccessRedirect } from "./access-reauth";
+
+/**
+ * Shared fetch for every API call in this file — and for any component-level
+ * API fetch that lives outside this file (exported for exactly that purpose).
+ *
+ *
+ * Uses redirect: "manual" so an edge-level redirect — in this deployment,
+ * Cloudflare Access sending an unauthenticated request to its login page —
+ * comes back as an observable opaque-redirect response instead of being
+ * silently followed into a cross-origin CORS failure (the login page sends
+ * no Access-Control-Allow-Origin header, so following the redirect makes
+ * fetch() reject with a bare TypeError that reads as "network error").
+ *
+ * Neither the Worker nor the Pages proxy ever redirects an /api/* request,
+ * so an opaque-redirect response here always means the Access session is
+ * missing or expired. noteAccessRedirect() reloads the page once per tab to
+ * re-authenticate (a top-level navigation is the only way to complete an
+ * Access login) and, on repeated failure, returns an error telling the user
+ * to log in manually instead.
+ */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(`${API_BASE}${path}`, { ...init, redirect: "manual" });
+  if (res.type === "opaqueredirect") throw noteAccessRedirect();
+  return res;
+}
+
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -28,7 +55,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function request<T>(path: string, method: "GET" | "PUT" | "PATCH" | "DELETE", body?: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await apiFetch(path, {
     method,
     headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -76,11 +103,14 @@ export async function fetchAiSummary(appsec: AppSecData, isPoc = true): Promise<
  */
 export async function fetchUserEmail(): Promise<string | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/me`);
+    const res = await apiFetch("/api/me");
     if (!res.ok) return null;
     const data = await res.json() as { ok: boolean; email: string | null };
     return data.email ?? null;
   } catch {
+    // Errors are swallowed by design (attribution is optional), but if the
+    // cause was an Access login redirect, noteAccessRedirect() inside
+    // apiFetch has already scheduled the re-authentication reload.
     return null;
   }
 }
@@ -105,7 +135,7 @@ export interface AuditReportMeta {
  */
 export async function fetchAuditList(): Promise<AuditReportMeta[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/audit`);
+    const res = await apiFetch("/api/audit");
     if (!res.ok) return [];
     const data = await res.json() as { ok: boolean; reports: AuditReportMeta[] };
     return data.reports ?? [];
@@ -123,7 +153,7 @@ export async function saveAuditReport(params: {
   html: string;
 }): Promise<{ key: string } | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/audit`, {
+    const res = await apiFetch("/api/audit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
