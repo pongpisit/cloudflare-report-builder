@@ -524,7 +524,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                         <p style={{ fontSize: 11, color: "#b45309", marginTop: 6, marginBottom: 0 }}>{customDateError}</p>
                       ) : (
                         <p style={{ fontSize: 11, color: "#5d5e65", marginTop: 6, marginBottom: 0 }}>
-                          Exact period in your timezone; times are optional (default 00:00 → 23:59, end time inclusive). Request-level breakdowns (TLS/PQC, WAF, bots, AI crawlers, DNS analytics, top IPs/ASNs…) follow the exact window; a few day-granularity charts (daily overview, errors, countries, browsers, content types, status codes) cover whole days. Fine-grained data only reaches ~30 days back.
+                          Exact period in your timezone; times are optional (default 00:00 → 23:59, end time inclusive). Request-level breakdowns (TLS/PQC, WAF, bots, AI crawlers, DNS analytics, countries, browsers, status codes, content types, top IPs/ASNs…) follow the exact window — sampled like Cloudflare's own dashboard; only the daily overview + error charts cover whole days. Fine-grained data only reaches ~30 days back.
                         </p>
                       )}
                     </div>

@@ -1248,60 +1248,80 @@ export async function fetchCountryDistribution(
   until: string,
   limit = 20
 ): Promise<CountryRow[]> {
-  const query = `
+  // httpRequestsAdaptiveGroups has no per-country `threats` aggregate (the
+  // 1dGroups countryMap did), so compose the exact-window view from two
+  // adaptive queries in parallel:
+  //   1. requests + bytes per country  (http adaptive, `count`/`sum`)
+  //   2. threats per country           (firewall events, action ≠ allow —
+  //      the same proxy fetchWafTopCountries uses; sampled like the rest of
+  //      the adaptive family, but scoped to the exact window)
+  const reqQuery = `
     query CountryDistribution($zoneTag: string!, $since: string!, $until: string!) {
       viewer {
         zones(filter: { zoneTag: $zoneTag }) {
-          httpRequests1dGroups(
-            limit: 31
-            filter: { date_geq: $since, date_lt: $until }
+          httpRequestsAdaptiveGroups(
+            limit: 200
+            filter: { ${rangeFilterClause(since)} }
+            orderBy: [count_DESC]
           ) {
-            sum {
-              countryMap {
-                clientCountryName
-                requests
-                bytes
-                threats
-              }
-            }
+            dimensions { clientCountryName }
+            count
+            sum { edgeResponseBytes }
+            avg { sampleInterval }
+          }
+        }
+      }
+    }
+  `;
+  const threatQuery = `
+    query CountryThreats($zoneTag: string!, $since: string!, $until: string!) {
+      viewer {
+        zones(filter: { zoneTag: $zoneTag }) {
+          firewallEventsAdaptiveGroups(
+            limit: 200
+            filter: { ${rangeFilterClause(since)}, action_neq: "allow" }
+            orderBy: [count_DESC]
+          ) {
+            dimensions { clientCountryName }
+            count
+            avg { sampleInterval }
           }
         }
       }
     }
   `;
 
-  const data = await gql<{
-    httpRequests1dGroups: Array<{
-      sum: {
-        countryMap: Array<{
-          clientCountryName: string;
-          requests: number;
-          bytes: number;
-          threats: number;
-        }>;
-      };
-    }>;
-  }>(token, query, { zoneTag: zoneId, since, until });
+  const [reqData, threatData] = await Promise.all([
+    gql<{
+      httpRequestsAdaptiveGroups: Array<{
+        dimensions: { clientCountryName: string };
+        count: number;
+        sum: { edgeResponseBytes: number };
+      }>;
+    }>(token, reqQuery, { zoneTag: zoneId, since, until }),
+    gql<{
+      firewallEventsAdaptiveGroups: Array<{
+        dimensions: { clientCountryName: string };
+        count: number;
+      }>;
+    }>(token, threatQuery, { zoneTag: zoneId, since, until }),
+  ]);
 
-  // Aggregate across all daily buckets → total per country
   const totals = new Map<string, CountryRow>();
-  for (const day of data.httpRequests1dGroups ?? []) {
-    for (const c of day.sum?.countryMap ?? []) {
-      const name = c.clientCountryName || "Unknown";
-      const existing = totals.get(name);
-      if (existing) {
-        existing.requests += c.requests;
-        existing.bytes += c.bytes;
-        existing.threats += c.threats;
-      } else {
-        totals.set(name, {
-          clientCountryName: name,
-          requests: c.requests,
-          bytes: c.bytes,
-          threats: c.threats,
-        });
-      }
-    }
+  for (const r of reqData.httpRequestsAdaptiveGroups ?? []) {
+    const name = r.dimensions.clientCountryName || "Unknown";
+    totals.set(name, {
+      clientCountryName: name,
+      requests: r.count,
+      bytes: r.sum?.edgeResponseBytes ?? 0,
+      threats: 0,
+    });
+  }
+  for (const t of threatData.firewallEventsAdaptiveGroups ?? []) {
+    const name = t.dimensions.clientCountryName || "Unknown";
+    const row = totals.get(name);
+    if (row) row.threats += t.count;
+    else totals.set(name, { clientCountryName: name, requests: 0, bytes: 0, threats: t.count });
   }
 
   return Array.from(totals.values())
@@ -1325,23 +1345,22 @@ export async function fetchBrowserBreakdown(
   until: string,
   limit = 10
 ): Promise<BrowserRow[]> {
-  // NOTE: browserMap exposes pageViews (not total requests).
-  // The Cloudflare dashboard "Requests by Browser" uses the same pageViews field.
-  // For total request accuracy, use the requests field from httpRequests1dGroups.sum.
+  // userAgentBrowser is the httpRequestsAdaptiveGroups browser dimension
+  // (same field fetchSourceBrowsers uses in production). The old 1dGroups
+  // browserMap only exposed pageViews; this counts actual requests over the
+  // exact window, which matches the section's "requests" label.
   const query = `
     query BrowserBreakdown($zoneTag: string!, $since: string!, $until: string!) {
       viewer {
         zones(filter: { zoneTag: $zoneTag }) {
-          httpRequests1dGroups(
-            limit: 31
-            filter: { date_geq: $since, date_lt: $until }
+          httpRequestsAdaptiveGroups(
+            limit: $limit
+            filter: { ${rangeFilterClause(since)} }
+            orderBy: [count_DESC]
           ) {
-            sum {
-              browserMap {
-                uaBrowserFamily
-                requests: pageViews
-              }
-            }
+            dimensions { userAgentBrowser }
+            count
+            avg { sampleInterval }
           }
         }
       }
@@ -1349,27 +1368,14 @@ export async function fetchBrowserBreakdown(
   `;
 
   const data = await gql<{
-    httpRequests1dGroups: Array<{
-      sum: {
-        browserMap: Array<{
-          uaBrowserFamily: string;
-          requests: number;
-        }>;
-      };
+    httpRequestsAdaptiveGroups: Array<{
+      dimensions: { userAgentBrowser: string };
+      count: number;
     }>;
-  }>(token, query, { zoneTag: zoneId, since, until });
+  }>(token, query, { zoneTag: zoneId, since, until, limit });
 
-  // Aggregate across all daily buckets
-  const totals = new Map<string, number>();
-  for (const day of data.httpRequests1dGroups ?? []) {
-    for (const b of day.sum?.browserMap ?? []) {
-      const name = b.uaBrowserFamily || "Unknown";
-      totals.set(name, (totals.get(name) ?? 0) + b.requests);
-    }
-  }
-
-  return Array.from(totals.entries())
-    .map(([uaBrowserFamily, requests]) => ({ uaBrowserFamily, requests }))
+  return (data.httpRequestsAdaptiveGroups ?? [])
+    .map((r) => ({ uaBrowserFamily: r.dimensions.userAgentBrowser || "Unknown", requests: r.count }))
     .sort((a, b) => b.requests - a.requests)
     .slice(0, limit);
 }
@@ -1516,23 +1522,21 @@ export async function fetchHttpStatusSummary(
   since: string,
   until: string
 ): Promise<HttpStatusSummary> {
-  // Re-use the daily error time-series endpoint: aggregate it here
-  // Note: fetchHttpErrorTimeSeries already queries the correct field,
-  // so we just sum it up.
+  // edgeResponseStatus is a first-class dimension on httpRequestsAdaptiveGroups
+  // (fetchApiStatusBreakdown uses it in production) — grouped here for the
+  // 1xx–5xx totals over the exact window.
   const query = `
     query HttpStatusSummary($zoneTag: string!, $since: string!, $until: string!) {
       viewer {
         zones(filter: { zoneTag: $zoneTag }) {
-          httpRequests1dGroups(
-            limit: 31
-            filter: { date_geq: $since, date_lt: $until }
+          httpRequestsAdaptiveGroups(
+            limit: 25
+            filter: { ${rangeFilterClause(since)} }
+            orderBy: [count_DESC]
           ) {
-            sum {
-              responseStatusMap {
-                edgeResponseStatus
-                requests
-              }
-            }
+            dimensions { edgeResponseStatus }
+            count
+            avg { sampleInterval }
           }
         }
       }
@@ -1540,22 +1544,16 @@ export async function fetchHttpStatusSummary(
   `;
 
   const data = await gql<{
-    httpRequests1dGroups: Array<{
-      sum: {
-        responseStatusMap: Array<{
-          edgeResponseStatus: number;
-          requests: number;
-        }>;
-      };
+    httpRequestsAdaptiveGroups: Array<{
+      dimensions: { edgeResponseStatus: number };
+      count: number;
     }>;
   }>(token, query, { zoneTag: zoneId, since, until });
 
   const totals: Record<string, number> = { "1": 0, "2": 0, "3": 0, "4": 0, "5": 0 };
-  for (const day of data.httpRequests1dGroups ?? []) {
-    for (const s of day.sum?.responseStatusMap ?? []) {
-      const prefix = String(Math.floor(s.edgeResponseStatus / 100));
-      totals[prefix] = (totals[prefix] ?? 0) + s.requests;
-    }
+  for (const s of data.httpRequestsAdaptiveGroups ?? []) {
+    const prefix = String(Math.floor((s.dimensions.edgeResponseStatus ?? 0) / 100));
+    totals[prefix] = (totals[prefix] ?? 0) + s.count;
   }
 
   const e1xx = totals["1"] ?? 0;
@@ -1868,6 +1866,13 @@ export interface ContentTypeRow {
   cacheHitPct: number;
 }
 
+// Content-type dimension on httpRequestsAdaptiveGroups: the schema isn't
+// documented field-by-field and this pipeline has no production example to
+// confirm the name, so probe the two likely candidates once per isolate and
+// memoize: a string = the validated dimension, null = none validated (fall
+// back to the whole-day 1dGroups contentTypeMap permanently).
+let adaptiveContentTypeDim: string | null | undefined;
+
 export async function fetchContentTypeBreakdown(
   token: string,
   zoneId: string,
@@ -1875,6 +1880,86 @@ export async function fetchContentTypeBreakdown(
   until: string,
   limit = 15
 ): Promise<ContentTypeRow[]> {
+  const candidates =
+    adaptiveContentTypeDim !== undefined
+      ? [adaptiveContentTypeDim]
+      : ["clientResponseContentType", "edgeResponseContentTypeName"];
+
+  const isSchemaError = (e: unknown) =>
+    /cannot query field|unknown field|not support|not defined/i.test(String((e as Error)?.message ?? e));
+
+  type AdaptiveCtRow = {
+    dimensions: Record<string, string>;
+    count: number;
+    sum: { edgeResponseBytes: number };
+  };
+  let adaptiveData: AdaptiveCtRow[] | null = null;
+
+  for (const dim of candidates) {
+    if (!dim) break;
+    const query = `
+      query ContentTypeBreakdown($zoneTag: string!, $since: string!, $until: string!, $limit: int!) {
+        viewer {
+          zones(filter: { zoneTag: $zoneTag }) {
+            httpRequestsAdaptiveGroups(
+              limit: $limit
+              filter: { ${rangeFilterClause(since)} }
+              orderBy: [count_DESC]
+            ) {
+              dimensions { ${dim} }
+              count
+              sum { edgeResponseBytes }
+              avg { sampleInterval }
+            }
+          }
+        }
+      }
+    `;
+    try {
+      const data = await gql<{ httpRequestsAdaptiveGroups: AdaptiveCtRow[] }>(
+        token,
+        query,
+        { zoneTag: zoneId, since, until, limit }
+      );
+      adaptiveData = data.httpRequestsAdaptiveGroups ?? [];
+      if (adaptiveContentTypeDim === undefined) {
+        adaptiveContentTypeDim = dim;
+        console.log(`fetchContentTypeBreakdown: using adaptive dimension "${dim}"`);
+      }
+      break;
+    } catch (e) {
+      if (!isSchemaError(e)) throw e;
+      console.warn(
+        `httpRequestsAdaptiveGroups rejected content-type dimension "${dim}" (${String((e as Error)?.message).slice(0, 120)})`
+      );
+    }
+  }
+
+  if (adaptiveContentTypeDim === undefined) {
+    // Both candidates rejected — memoize the negative so future reports go
+    // straight to the 1dGroups fallback below.
+    adaptiveContentTypeDim = null;
+  }
+
+  if (adaptiveData && adaptiveContentTypeDim) {
+    return adaptiveData
+      .map((r) => ({
+        edgeResponseContentTypeName: r.dimensions[adaptiveContentTypeDim as string] || "unknown",
+        requests: r.count,
+        bytes: r.sum?.edgeResponseBytes ?? 0,
+        cachedBytes: 0,
+        cacheHitPct: 0,
+      }))
+      .sort((a, b) => b.requests - a.requests)
+      .slice(0, limit);
+  }
+
+  // Whole-day fallback (whole UTC days — 1dGroups can't resolve finer).
+  // Timestamps in → day bounds out, same conversion the DNS guard uses.
+  const sinceDay = since.includes("T") ? since.slice(0, 10) : since;
+  const untilDay = until.includes("T")
+    ? new Date(Date.parse(until) + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    : until;
   const query = `
     query ContentTypeBreakdown($zoneTag: string!, $since: string!, $until: string!) {
       viewer {
@@ -1906,7 +1991,7 @@ export async function fetchContentTypeBreakdown(
         }>;
       };
     }>;
-  }>(token, query, { zoneTag: zoneId, since, until });
+  }>(token, query, { zoneTag: zoneId, since: sinceDay, until: untilDay });
 
   // Aggregate across all daily buckets
   const totals = new Map<string, { requests: number; bytes: number }>();

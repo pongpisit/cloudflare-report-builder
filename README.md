@@ -588,9 +588,9 @@ recipients, subject, and an optional custom message.
   like "August 2026"), or **an exact custom range** — start/end dates up to
   366 days apart plus optional HH:MM times (e.g. "Sep 1 09:00 → Sep 3
   17:30"), interpreted in the schedule's timezone. Every adaptive-dataset
-  section follows the exact window (local days + intra-day bounds); only the
-  `httpRequests1dGroups` sections (daily overview, errors, countries,
-  browsers, content types, status codes) are whole-day by dataset design.
+  section follows the exact window (local days + intra-day bounds); only
+  the daily-overview and error charts (1dGroups, whole days by dataset
+  design) don't — they switch to exact hourly buckets for ≤1-day windows.
   Prefer a calendar month for monthly schedules — a fixed 30-day window
   silently drifts against real month boundaries.
 - **Double-send guard**: an atomic `last_run_at` claim (compared against the
@@ -660,15 +660,19 @@ span 1–366 days; + optional `sinceTime`/`untilTime`, HH:MM local, defaults
 
 Every section aligns with that window to the extent its dataset allows:
 request-level breakdowns (TLS key-exchange/PQC, WAF rules/series, bots, AI
-crawlers, API traffic, DNS analytics, top IPs/ASNs/UA fingerprints, … — the
-`*AdaptiveGroups` datasets) filter by the exact `sinceTs`/`untilTs` instants,
-so they honor timezone-shifted local days and intra-day HH:MM bounds. A few
-day-granularity sections (daily overview, error series, countries, browsers,
-content types, status codes — the `httpRequests1dGroups` dataset) cover whole
-selected days, since that dataset is pre-aggregated per day. Cloudflare
-retains adaptive (fine-grained) data only ~30 days back; older ranges keep
-accurate daily totals but per-request sections come back empty (each shows
-its own upstream error).
+crawlers, API traffic, DNS analytics, countries, browsers, status codes,
+content types, top IPs/ASNs/UA fingerprints, … — the `*AdaptiveGroups`
+datasets, sampled the same way Cloudflare's own dashboard samples them)
+filter by the exact `sinceTs`/`untilTs` instants, so they honor
+timezone-shifted local days and intra-day HH:MM bounds. Only the two chart
+datasets that are pre-aggregated into whole days keep date semantics: the
+daily overview and its error series (`httpRequests1dGroups`); they switch
+to hourly (exact) for windows of one day or less. Country "threats" come
+from the firewall-events dataset (action ≠ allow) and the browser breakdown
+counts requests (`userAgentBrowser`) rather than the old `browserMap`
+pageViews. Cloudflare retains adaptive (fine-grained) data only ~30 days
+back; older ranges keep accurate daily totals but per-request sections come
+back empty (each shows its own upstream error).
 
 ### Finding registers (D1-backed lifecycle tracking)
 

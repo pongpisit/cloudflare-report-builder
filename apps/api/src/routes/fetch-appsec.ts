@@ -302,13 +302,12 @@ export async function generateAppsecData(input: {
   const days       = dateRange.days;
   const calendarPeriodLabel = dateRange.periodLabel; // e.g. "August 2026" / "Sep 1–15, 2026" / "7-Day"
 
-  // Adaptive datasets (httpRequests/firewallEvents/dnsAnalytics AdaptiveGroups)
-  // all take the exact sinceTs/untilTs instants now — every request-level
-  // breakdown follows the selected window precisely (local-day boundaries
-  // and intra-day HH:MM bounds included). Only the 1dGroups datasets
-  // (daily overview, error series, countries, browsers, content types,
-  // status summary) keep date strings — those datasets are pre-aggregated
-  // into whole days and cannot resolve anything finer.
+  // Every request-level breakdown (all *AdaptiveGroups datasets, sampled
+  // like Cloudflare's own dashboard) takes the exact sinceTs/untilTs
+  // instants — following the selected window precisely, local-day
+  // boundaries and intra-day HH:MM bounds included. Only the two chart
+  // datasets that are pre-aggregated into whole days keep date strings:
+  // httpRequests1dGroups (daily overview) and its error series.
   const errors: Record<string, string> = {};
 
   // ── 1. REST config (parallel) ───────────────────────────────────────────────
@@ -450,11 +449,11 @@ export async function generateAppsecData(input: {
     fetchDdosTimeSeries(token, zoneId, sinceTs, untilTs),
     fetchDdosVectors(token, zoneId, sinceTs, untilTs, 10),
     // Phase 1
-    fetchCountryDistribution(token, zoneId, since, untilQuery, 20),
-    fetchBrowserBreakdown(token, zoneId, since, untilQuery, 10),
+    fetchCountryDistribution(token, zoneId, sinceTs, untilTs, 20),
+    fetchBrowserBreakdown(token, zoneId, sinceTs, untilTs, 10),
     fetchDeviceBreakdown(token, zoneId, sinceTs, untilTs),
     fetchHttpMethodBreakdown(token, zoneId, sinceTs, untilTs, 10),
-    fetchHttpStatusSummary(token, zoneId, since, untilQuery),
+    fetchHttpStatusSummary(token, zoneId, sinceTs, untilTs),
     // Phase 2
     fetchTtfbTimeSeries(token, zoneId, sinceTs, untilTs),
     fetchEdgeColoDistribution(token, zoneId, sinceTs, untilTs, 15),
@@ -463,7 +462,7 @@ export async function generateAppsecData(input: {
     fetchTopThreatAsns(token, zoneId, sinceTs, untilTs, 10),
     fetchTopUserAgents(token, zoneId, sinceTs, untilTs, 15),
     // Phase 4
-    fetchContentTypeBreakdown(token, zoneId, since, untilQuery, 15),
+    fetchContentTypeBreakdown(token, zoneId, sinceTs, untilTs, 15),
     // Phase 5
     fetchTopReferrers(token, zoneId, sinceTs, untilTs, 20),
     fetchTopHttpHostnames(token, zoneId, sinceTs, untilTs, 50),
