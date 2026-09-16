@@ -12,7 +12,7 @@ import type {
 // In dev, Vite's proxy (vite.config.ts) forwards /api → wrangler dev on :8787.
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
-import { noteAccessRedirect } from "./access-reauth";
+import { noteAccessRedirect, clearAccessReauthFlag } from "./access-reauth";
 
 /**
  * Shared fetch for every API call in this file — and for any component-level
@@ -36,6 +36,10 @@ import { noteAccessRedirect } from "./access-reauth";
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(`${API_BASE}${path}`, { ...init, redirect: "manual" });
   if (res.type === "opaqueredirect") throw noteAccessRedirect();
+  // Any non-redirected response — success OR an app-level 4xx/5xx — proves
+  // the request passed the edge, i.e. the Access session is valid. Re-arm
+  // the automatic re-login for the next expiry episode.
+  clearAccessReauthFlag();
   return res;
 }
 

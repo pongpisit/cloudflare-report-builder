@@ -514,11 +514,15 @@ without them (that section just shows an honest empty state).
   cross-origin and sends no CORS headers — the browser blocks it, which
   otherwise surfaces as a cryptic CORS console error). The frontend issues
   API requests with `redirect: "manual"`, detects the opaque-redirect
-  response, and reloads the page exactly once per tab to re-authenticate —
-  a top-level navigation is the only way to complete an Access login. A
-  `sessionStorage` guard prevents a reload loop; after one attempt the UI
-  shows an explicit "session has expired" error instead. See
-  `apps/web/src/services/access-reauth.ts`.
+  response, and navigates to a **cache-busted URL** once per expiry episode
+  to re-authenticate — a top-level navigation is the only way to complete
+  an Access login, and the cache-bust matters: a plain reload can be
+  served from the browser's HTTP cache, which would render the SPA shell
+  again without ever hitting the edge. The guard re-arms automatically once
+  any API call succeeds (proving the session is valid), so every expiry
+  self-heals. If the session is still dead after one automatic attempt, a
+  blocking "Log in again" overlay is shown instead — a navigation loop is
+  impossible. See `apps/web/src/services/access-reauth.ts`.
 - **Rate limiting**: the expensive routes (`/api/appsec`, `/api/zerotrust`,
   `/api/summary`, `/api/zt-summary`, `/api/schedules/:id/send`,
   `/api/settings/test`) are capped at **50 requests / 5 minutes per source
@@ -778,7 +782,7 @@ Live/browser E2E tests need real credentials in `.env.test` (copy from
 | A report section is empty | Usually a missing optional token permission — check the [permission tables](#cloudflare-api-token-permissions). Empty states are deliberate, never faked |
 | DNS breakdown charts empty on a "Last Month" report | Expected: Cloudflare's DNS breakdown GraphQL dataset only retains ~4 weeks. Headline DNS totals are still accurate. See the `dataConfidence` note in the report |
 | Scheduled reports never send | Check `CF_API_TOKEN` (or Settings), `CF_ACCOUNT_ID`, `EMAIL_FROM`, that the sending domain is onboarded, and the schedule's run history for the recorded error |
-| API calls fail with a CORS error mentioning `cloudflareaccess.com` | Your Cloudflare Access session expired. A `fetch()` can't complete an Access login, so the app detects the redirect and reloads the page once to re-authenticate automatically; after that it shows an explicit "session has expired" error. If it persists, log in again in a fresh tab |
+| API calls fail with a CORS error mentioning `cloudflareaccess.com` | Your Cloudflare Access session expired. A `fetch()` can't complete an Access login, so the app detects the redirect and re-navigates through the Access login automatically (cache-busted, once per expiry episode); if the session is still invalid it shows a blocking "Log in again" overlay instead. If it persists, check the Access application's policy in the Zero Trust dashboard |
 | `wrangler dev` ignores my D1 database | `npm run dev:api` reads `wrangler.toml`. Use `npx wrangler dev --config wrangler.local.toml` |
 | Deploy fails on missing `database_id` | Run `npx wrangler d1 create poc-report-schedules` and put the ID in `wrangler.local.toml` |
 | TypeScript doesn't know a new binding | Run `npm run cf-typegen` to regenerate `worker-configuration.d.ts` |
