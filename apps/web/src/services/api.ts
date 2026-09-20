@@ -184,6 +184,51 @@ export async function fetchScheduleZones(): Promise<ZoneOption[]> {
   return result.zones;
 }
 
+/**
+ * List a CUSTOMER's zones with their own token (multi-customer) — used by the
+ * schedule form to populate the zone picker before the credentials are saved
+ * on the schedule. Neither the token nor the result is persisted here.
+ */
+export async function fetchScheduleZonesWithCredentials(
+  apiToken: string,
+  accountId?: string | null
+): Promise<ZoneOption[]> {
+  const result = await post<{ ok: boolean; zones: ZoneOption[] }>(
+    "/api/schedule/zones",
+    { apiToken, ...(accountId ? { accountId } : {}) }
+  );
+  return result.zones;
+}
+
+/** Result of validating candidate credentials (per-schedule or backend). */
+export interface CredentialsTestResult {
+  tokenValid: boolean;
+  accountName: string | null;
+  zonesVisible: number | null;
+  zonesWarning: string | null;
+  accountSkipped?: string;
+}
+
+/**
+ * Validate credentials against the real Cloudflare API without saving them.
+ * With no arguments this tests the effective backend credentials; with a
+ * token (± account) it tests those — e.g. a customer token typed into the
+ * schedule form.
+ */
+export async function testCredentials(
+  cfApiToken?: string,
+  cfAccountId?: string | null
+): Promise<CredentialsTestResult> {
+  const result = await post<{ ok: boolean; result: CredentialsTestResult }>(
+    "/api/settings/test",
+    {
+      ...(cfApiToken ? { cfApiToken } : {}),
+      ...(cfApiToken && cfAccountId ? { cfAccountId } : {}),
+    }
+  );
+  return result.result;
+}
+
 export async function listSchedules(): Promise<ScheduleConfig[]> {
   const result = await request<{ ok: boolean; schedules: ScheduleConfig[] }>("/api/schedules", "GET");
   return result.schedules;

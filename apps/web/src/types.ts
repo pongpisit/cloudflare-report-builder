@@ -782,6 +782,12 @@ export interface ScheduleConfig {
   sinceTime: string | null;
   untilTime: string | null;
   monthsAgo: number | null;
+  /** True when this schedule carries its own API token (value never returned). */
+  apiTokenSet: boolean;
+  /** Masked hint ("••••••••xxxx") when a per-schedule token is stored. */
+  apiTokenHint: string | null;
+  /** Per-schedule customer account ID (null = use the backend account). */
+  accountId: string | null;
 }
 
 /** Payload for create/update — everything the dashboard configures. */
@@ -808,6 +814,11 @@ export interface ScheduleInput {
   isPoc: boolean;
   clientName: string | null;
   enabled: boolean;
+  /** Set/replace the schedule's own token. undefined = keep stored (update);
+   *  null = clear back to backend credentials; string = the customer token. */
+  apiToken?: string | null;
+  /** Per-schedule customer account ID (null = use the backend account). */
+  accountId?: string | null;
 }
 
 export interface ScheduleHistoryEntry {

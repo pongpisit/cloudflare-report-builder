@@ -304,7 +304,8 @@ export default function BackendSettingsForm({ onDone, onSaved }: Props) {
         <p style={{ fontSize: 11, color: "#5d5e65", lineHeight: 1.6, borderTop: "1px solid #f0f0f0", paddingTop: 14 }}>
           Values are stored in the D1 <code style={{ fontFamily: "monospace" }}>settings</code> table and override the
           Worker's env secret/vars — no redeploy needed to rotate the token. The token is stored as-is, so keep this
-          dashboard behind Cloudflare Access.
+          dashboard behind Cloudflare Access. These are the <strong>fallback</strong> credentials: any schedule that
+          carries its own customer credentials (multi-customer) uses those instead.
         </p>
       </div>
     </div>

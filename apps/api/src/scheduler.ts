@@ -4,7 +4,8 @@
  * A cron trigger fires hourly (see [triggers] in wrangler.toml). The handler
  * finds schedules whose most recent intended occurrence is within GRACE_MS of
  * now, claims each one atomically (double-send guard), then for each: generates
- * the report with the backend-bound CF_API_TOKEN, produces the Workers AI
+ * the report with that schedule's own credentials when set (multi-customer)
+ * and the backend-bound CF_API_TOKEN otherwise, produces the Workers AI
  * executive summary, renders an email-safe HTML digest, sends it via the EMAIL
  * binding (Cloudflare Email Sending), snapshots the HTML to R2, and records
  * the run in send_history.
@@ -178,12 +179,17 @@ export async function runSchedule(
   let messageId: string | undefined;
 
   try {
-    // Credentials resolve dashboard settings (D1) first, then the Worker's
-    // env secret/var — a token rotated in Settings applies on the next run.
-    const { token, accountId, emailFrom } = await getEffectiveBackendConfig(env);
+    // Credential resolution (multi-customer): a schedule may carry its own
+    // token/account (customer-scoped); otherwise the backend credentials
+    // apply — dashboard Settings (D1) first, then the Worker's env
+    // secret/var. A token rotated anywhere takes effect on the next run.
+    const backend = await getEffectiveBackendConfig(env);
+    const token = row.api_token || backend.token;
+    const accountId = row.account_id || backend.accountId;
+    const emailFrom = backend.emailFrom;
     if (!token || !accountId) {
       throw new Error(
-        "No API token / account configured — set them in Scheduled Reports → Settings, or via the CF_API_TOKEN secret + CF_ACCOUNT_ID var"
+        "No API token / account for this schedule — set per-schedule credentials in the schedule's form, or backend credentials in Scheduled Reports → Settings (or via the CF_API_TOKEN secret + CF_ACCOUNT_ID var)"
       );
     }
 

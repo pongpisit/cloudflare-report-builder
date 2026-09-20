@@ -15,6 +15,7 @@ import type { ScheduleConfig, ScheduleInput, ScheduleHistoryEntry, ZoneOption, S
 import {
   listSchedules, createSchedule, updateSchedule, deleteSchedule,
   sendScheduleNow, fetchScheduleHistory, fetchScheduleZones,
+  fetchScheduleZonesWithCredentials, testCredentials,
 } from "../services/api";
 import BackendSettingsForm from "../components/BackendSettingsForm";
 
@@ -458,6 +459,16 @@ function ScheduleCard({ schedule: s, busy, onEdit, onDelete, onSendNow, onToggle
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#5d5e65" }}>
               {describeSchedule(s)} · {describeRange(s)} report
               {s.reportType === "appsec" && s.zoneName ? ` · ${s.zoneName}` : ""}
+              {s.apiTokenSet && (
+                <span title={`Uses its own Cloudflare credentials${s.accountId ? ` (account ${s.accountId})` : ""} — token ${s.apiTokenHint ?? ""}`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 3, marginLeft: 6,
+                    padding: "1px 7px", fontSize: 10, borderRadius: 999,
+                    border: "1px solid #b6d4f8", backgroundColor: "#e7f1fb", color: "#1c4d8c",
+                  }}>
+                  <KeyRound size={9} /> own credentials
+                </span>
+              )}
             </p>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#5d5e65", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
               <Mail size={11} style={{ flexShrink: 0 }} />
@@ -593,6 +604,19 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
   const [clientName, setClientName] = useState(initial?.clientName ?? "");
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
 
+  // Per-schedule customer credentials (multi-customer). The stored token is
+  // write-only — the form never receives its value, so edits that don't touch
+  // credentials send no apiToken field (server keeps the stored one), while
+  // an explicit Remove sends apiToken: null.
+  const [apiToken, setApiToken] = useState("");
+  const [removeToken, setRemoveToken] = useState(false);
+  const [accountId, setAccountId] = useState(initial?.accountId ?? "");
+  const [credBusy, setCredBusy] = useState<"" | "test" | "zones">("");
+  const [credNote, setCredNote] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  // Zones listed with the typed customer credentials — replaces the backend
+  // list for this form session once loaded.
+  const [custZones, setCustZones] = useState<ZoneOption[] | null>(null);
+
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -646,7 +670,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       if (Math.round((uv.getTime() - sv.getTime()) / 86400000) + 1 > 366) { setFormError("Custom range can't exceed 366 days."); return; }
     }
 
-    const selectedZone = (zones ?? []).find((z) => z.id === zoneId);
+    const selectedZone = (custZones ?? zones ?? []).find((z) => z.id === zoneId);
     const input: ScheduleInput = {
       name: name.trim(),
       reportType,
@@ -670,6 +694,9 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       isPoc,
       clientName: clientName.trim() || null,
       enabled,
+      accountId: accountId.trim() || null,
+      ...(apiToken ? { apiToken: apiToken.trim() } : {}),
+      ...(removeToken && !apiToken ? { apiToken: null } : {}),
     };
 
     setSaving(true);
@@ -733,17 +760,110 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
           </div>
         </div>
 
+        {/* Per-schedule customer credentials (multi-customer) */}
+        <div style={{ backgroundColor: "#fafafa", border: "1px solid #e2e2e2", padding: 16, marginBottom: 16 }}>
+          <div className="flex items-center gap-2 mb-1">
+            <KeyRound size={11} style={{ color: "#5d5e65" }} />
+            <span style={{ fontSize: 11, letterSpacing: "0.09375rem", textTransform: "uppercase", color: "#5d5e65" }}>
+              Customer Cloudflare Credentials (optional)
+            </span>
+          </div>
+          <p style={{ fontSize: 11, color: "#5d5e65", lineHeight: 1.5, marginBottom: 12 }}>
+            Use this schedule for a different Cloudflare customer than the backend account: paste their API token
+            (and Account ID for Zero Trust reports). Falls back to the backend credentials in Settings when blank.
+          </p>
+
+          {initial?.apiTokenSet && !removeToken && (
+            <p style={{ fontSize: 11, color: "#5d5e65", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+              <CheckCircle size={11} style={{ color: "#16a34a", flexShrink: 0 }} />
+              A customer token is stored ({initial.apiTokenHint}). Leave blank to keep it.
+            </p>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-3">
+            <div>
+              <label className="ar-input-label"><KeyRound size={10} style={{ display: "inline", marginRight: 4 }} /> API Token</label>
+              <input
+                type="password" value={apiToken} autoComplete="new-password" disabled={removeToken}
+                onChange={(e) => { setApiToken(e.target.value); setCredNote(null); }}
+                placeholder={removeToken ? "Will be removed on save" : "Customer's Cloudflare API token"}
+                className="ar-input" maxLength={500} style={removeToken ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+              />
+            </div>
+            <div>
+              <label className="ar-input-label"><User size={10} style={{ display: "inline", marginRight: 4 }} /> Account ID (optional)</label>
+              <input
+                type="text" value={accountId}
+                onChange={(e) => { setAccountId(e.target.value); setCredNote(null); }}
+                placeholder="Customer's Account ID — defaults to the backend account"
+                className="ar-input" maxLength={64}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <button type="button" disabled={!apiToken.trim() || credBusy !== ""}
+              onClick={async () => {
+                setCredBusy("test"); setCredNote(null);
+                try {
+                  const r = await testCredentials(apiToken.trim(), accountId.trim() || null);
+                  setCredNote({
+                    kind: "ok",
+                    text: r.accountName
+                      ? `Token valid — account "${r.accountName}", ${r.zonesVisible ?? "?"} zones visible.`
+                      : `Token valid.${r.accountSkipped ? " " + r.accountSkipped : ""}`,
+                  });
+                } catch (e) {
+                  setCredNote({ kind: "err", text: e instanceof Error ? e.message : "Credential test failed." });
+                } finally { setCredBusy(""); }
+              }}
+              className="ar-btn-ghost" style={{ padding: "7px 12px 5px", fontSize: 10 }}>
+              {credBusy === "test" ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle size={10} />} Test credentials
+            </button>
+            <button type="button" disabled={!apiToken.trim() || credBusy !== ""}
+              onClick={async () => {
+                setCredBusy("zones"); setCredNote(null);
+                try {
+                  const z = await fetchScheduleZonesWithCredentials(apiToken.trim(), accountId.trim() || null);
+                  setCustZones(z);
+                  setCredNote({ kind: "ok", text: `Listed ${z.length} zone${z.length === 1 ? "" : "s"} with the customer's token — the picker below now shows them.` });
+                } catch (e) {
+                  setCredNote({ kind: "err", text: e instanceof Error ? e.message : "Failed to list zones." });
+                } finally { setCredBusy(""); }
+              }}
+              className="ar-btn-ghost" style={{ padding: "7px 12px 5px", fontSize: 10 }}>
+              {credBusy === "zones" ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} /> : <Globe size={10} />} Load their zones
+            </button>
+            {initial?.apiTokenSet && (
+              <button type="button" disabled={credBusy !== "" || !!apiToken}
+                onClick={() => { setRemoveToken(!removeToken); setCredNote(null); }}
+                className="ar-btn-ghost" style={{ padding: "7px 12px 5px", fontSize: 10, color: removeToken ? "#16a34a" : undefined }}>
+                <X size={10} /> {removeToken ? "Keep stored token" : "Remove stored token"}
+              </button>
+            )}
+            {credNote && (
+              <p style={{
+                fontSize: 11, flexBasis: "100%",
+                color: credNote.kind === "ok" ? "#166534" : "#d51121",
+                display: "flex", alignItems: "center", gap: 6, marginBottom: 0,
+              }}>
+                {credNote.kind === "ok" ? <CheckCircle size={11} /> : <AlertCircle size={11} />} {credNote.text}
+              </p>
+            )}
+          </div>
+        </div>
+
         {/* Zone picker (appsec) */}
         {reportType === "appsec" && (
           <div>
             <label className="ar-input-label">
               <Globe size={10} style={{ display: "inline", marginRight: 4 }} /> Select Zone
             </label>
-            {loadingZones ? (
+            {loadingZones && !custZones ? (
               <div style={{ padding: "12px 0", color: "#5d5e65", fontSize: 12, display: "flex", alignItems: "center", gap: 8 }}>
                 <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Loading zones (backend token)…
               </div>
-            ) : zonesError ? (
+            ) : zonesError && !custZones ? (
               <div className="p-4" style={{ backgroundColor: "#fef2f2", border: "1px solid #fecaca" }}>
                 <p style={{ fontSize: 12, color: "#7f1d1d", marginBottom: 8 }}>{zonesError}</p>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -758,11 +878,11 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
             ) : (
               <select value={zoneId} onChange={(e) => setZoneId(e.target.value)} className="ar-input" style={{ cursor: "pointer" }}>
                 <option value="">— Select a zone —</option>
-                {(zones ?? []).map((z) => (
+                {(custZones ?? zones ?? []).map((z) => (
                   <option key={z.id} value={z.id}>{z.name} ({z.plan})</option>
                 ))}
                 {/* Keep a previously saved zone selectable even if not in the current list */}
-                {zoneId && !(zones ?? []).some((z) => z.id === zoneId) && (
+                {zoneId && !(custZones ?? zones ?? []).some((z) => z.id === zoneId) && (
                   <option value={zoneId}>{zoneName || zoneId} (saved)</option>
                 )}
               </select>

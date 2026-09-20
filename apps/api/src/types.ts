@@ -67,6 +67,8 @@ export interface ScheduleRow {
   since_time: string | null;
   until_time: string | null;
   months_ago: number | null;
+  api_token: string | null;      // per-schedule customer token (write-only via API)
+  account_id: string | null;     // per-schedule customer account (falls back to backend)
 }
 
 /** Schedule as returned to the dashboard (recipients parsed, booleans coerced) */
@@ -99,6 +101,12 @@ export interface ScheduleConfig {
   sinceTime: string | null;
   untilTime: string | null;
   monthsAgo: number | null;
+  /** True when this schedule carries its own API token (value never returned). */
+  apiTokenSet: boolean;
+  /** Masked hint ("••••••••xxxx") when a per-schedule token is stored. */
+  apiTokenHint: string | null;
+  /** Per-schedule customer account ID (null = use the backend account). */
+  accountId: string | null;
 }
 
 export interface SendHistoryRow {

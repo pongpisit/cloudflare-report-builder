@@ -97,11 +97,28 @@ export async function handleUpdateSettings(c: Context<{ Bindings: Env }>) {
 // ─── POST /api/settings/test ──────────────────────────────────────────────────
 
 export async function handleTestSettings(c: Context<{ Bindings: Env }>) {
-  const { token, accountId } = await getEffectiveBackendConfig(c.env);
+  // Optional body override: { cfApiToken?, cfAccountId? } — validate
+  // candidate credentials (e.g. a customer's token typed into the schedule
+  // form) WITHOUT saving them. Absent/empty body = test the effective
+  // backend credentials, as before. With a body token but no account, only
+  // token verification runs (the account/zone steps are skipped).
+  let bodyToken: string | undefined;
+  let bodyAccountId: string | undefined;
+  try {
+    const body = (await c.req.json()) as { cfApiToken?: unknown; cfAccountId?: unknown };
+    if (typeof body?.cfApiToken === "string" && body.cfApiToken.trim()) bodyToken = body.cfApiToken.trim();
+    if (typeof body?.cfAccountId === "string" && body.cfAccountId.trim()) bodyAccountId = body.cfAccountId.trim();
+  } catch { /* no body — backend test */ }
 
-  if (!token || !accountId) {
+  const effective = await getEffectiveBackendConfig(c.env);
+  const token = bodyToken ?? effective.token;
+  const accountId = bodyToken !== undefined ? (bodyAccountId ?? null) : effective.accountId;
+
+  if (!token) {
     return c.json(
-      { error: "No API token / account configured — set them in Settings or via the Worker's secret/var" },
+      { error: bodyToken !== undefined
+          ? "apiToken is required in the body when testing candidate credentials"
+          : "No API token / account configured — set them in Settings or via the Worker's secret/var" },
       400
     );
   }
@@ -116,7 +133,21 @@ export async function handleTestSettings(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  // 2. Account accessibility (needs Account Settings: Read)
+  // 2. Account accessibility (needs Account Settings: Read) — skipped when
+  //    testing a body token without an account ID (token-only validation).
+  if (!accountId) {
+    return c.json({
+      ok: true,
+      result: {
+        tokenValid: true,
+        accountName: null,
+        zonesVisible: null,
+        zonesWarning: null,
+        accountSkipped: "Token verified on its own — provide the account ID for the account/zone checks",
+      },
+    });
+  }
+
   const account = await cfGet<{ name?: string }>(token, `/accounts/${accountId}`);
   if (!account.ok) {
     return c.json(

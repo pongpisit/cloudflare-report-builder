@@ -9,7 +9,8 @@
  *   POST /api/summary   — generate AI executive summary via Workers AI
  *   GET  /health        — liveness check
  *   /api/schedules/*    — scheduled report configuration (D1-backed)
- *   GET  /api/schedule/zones — zone picker for schedules (backend-bound token)
+ *   GET|POST /api/schedule/zones — zone picker: GET uses backend credentials,
+ *                                 POST accepts { apiToken, accountId } (customer-scoped)
  *
  * Scheduled: hourly cron — generates due reports and emails them via
  * Cloudflare Email Sending (see src/scheduler.ts).
@@ -181,7 +182,8 @@ app.get  ("/api/alert-register",     handleGetAlertRegister);
 app.patch("/api/alert-register/:id", handlePatchAlertRegister);
 
 // ─── Scheduled report emails — configuration dashboard (D1) ──────────────────
-app.get ("/api/schedule/zones",       handleScheduleZones);          // zone picker (backend token)
+app.get ("/api/schedule/zones",       handleScheduleZones);          // zone picker (backend credentials)
+app.post("/api/schedule/zones",       handleScheduleZones);          // zone picker (body credentials — multi-customer)
 app.get ("/api/schedules",            handleListSchedules);
 app.post("/api/schedules",            handleCreateSchedule);
 app.put ("/api/schedules/:id",        handleUpdateSchedule);

@@ -8,9 +8,11 @@
  *   POST   /api/schedules/:id/send    — generate + send now (test)
  *   GET    /api/schedules/:id/history — recent runs
  *
- * The dashboard only manages configuration — the Cloudflare API token used
- * for generation is bound on the backend (CF_API_TOKEN secret), never sent
- * from the client.
+ * Credentials: a schedule may carry its OWN Cloudflare API token + account ID
+ * (multi-customer) — stored server-side, write-only through the API (masked to
+ * a hint on read). When absent, the backend credentials apply (Settings → D1
+ * → CF_API_TOKEN secret / CF_ACCOUNT_ID var). On update, apiToken: undefined
+ * keeps the stored token, null clears it (back to backend credentials).
  */
 
 import type { Context } from "hono";
@@ -60,6 +62,10 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     sinceTime: row.since_time ?? null,
     untilTime: row.until_time ?? null,
     monthsAgo: row.months_ago ?? null,
+    // Per-schedule credentials — the token VALUE never leaves the backend.
+    apiTokenSet: !!row.api_token,
+    apiTokenHint: row.api_token ? `••••••••${row.api_token.slice(-4)}` : null,
+    accountId: row.account_id ?? null,
   };
 }
 
@@ -88,6 +94,9 @@ interface ValidatedSchedule {
   sinceTime: string | null;
   untilTime: string | null;
   monthsAgo: number | null;
+  /** undefined = keep existing on update (create: none); null = clear; string = set */
+  apiToken: string | null | undefined;
+  accountId: string | null;
 }
 
 function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: string } {
@@ -208,6 +217,31 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
     clientName = b.clientName.trim() || null;
   }
 
+  // Per-schedule credentials (multi-customer). apiToken: undefined = keep the
+  // stored token on update (the client never sees the value, so edits that
+  // don't touch credentials must not wipe them); null = clear (fall back to
+  // backend credentials); a string sets/replaces it. accountId is a normal
+  // full-replacement field — the client always has it.
+  let apiToken: string | null | undefined;
+  if (b.apiToken === undefined) {
+    apiToken = undefined;
+  } else if (b.apiToken === null || b.apiToken === "") {
+    apiToken = null;
+  } else if (typeof b.apiToken === "string") {
+    apiToken = b.apiToken.trim();
+    if (apiToken.length < 10 || apiToken.length > 500)
+      return { error: "apiToken looks too short to be valid (min 10 chars)" };
+  } else {
+    return { error: "apiToken must be a string or null" };
+  }
+
+  let accountId: string | null = null;
+  if (b.accountId !== undefined && b.accountId !== null) {
+    if (typeof b.accountId !== "string" || b.accountId.length > 64)
+      return { error: "accountId must be a string (max 64 chars)" };
+    accountId = b.accountId.trim() || null;
+  }
+
   const isPoc = b.isPoc === undefined ? true : b.isPoc !== false;
   const enabled = b.enabled === undefined ? true : b.enabled !== false;
 
@@ -217,6 +251,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
       isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
       sinceDate, untilDate, sinceTime, untilTime, monthsAgo,
+      apiToken, accountId,
     },
   };
 }
@@ -249,15 +284,17 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
        (id, name, report_type, zone_id, zone_name, days, tz_offset, frequency,
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
         is_poc, client_name, enabled, created_at, updated_at, range_mode,
-        since_date, until_date, since_time, until_time, months_ago)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        since_date, until_date, since_time, until_time, months_ago,
+        api_token, account_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
       data.tzOffset, data.frequency, data.dayOfWeek, data.dayOfMonth,
       data.sendHourUtc, data.recipients, data.subject, data.message,
       data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode,
-      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo
+      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo,
+      data.apiToken ?? null, data.accountId
     )
     .run();
 
@@ -279,6 +316,10 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
   const { data, error } = validateSchedule(body);
   if (!data) return c.json({ error }, 400);
 
+  // undefined apiToken = keep the stored token (the dashboard never has the
+  // value to resend); null = clear back to backend credentials.
+  const apiToken = data.apiToken === undefined ? existing.api_token : data.apiToken;
+
   const now = new Date().toISOString();
   await c.env.DB.prepare(
     `UPDATE schedules SET
@@ -286,7 +327,8 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        frequency = ?, day_of_week = ?, day_of_month = ?, send_hour_utc = ?,
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
        enabled = ?, updated_at = ?, range_mode = ?,
-       since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?
+       since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?,
+       api_token = ?, account_id = ?
      WHERE id = ?`
   )
     .bind(
@@ -294,7 +336,8 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
       data.frequency, data.dayOfWeek, data.dayOfMonth, data.sendHourUtc,
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
       data.enabled, now, data.rangeMode,
-      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, id
+      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo,
+      apiToken, data.accountId, id
     )
     .run();
 

@@ -341,6 +341,7 @@ ADD COLUMN` with defaults):
 | `0008_schedule_custom_range.sql` | `schedules.since_date`/`until_date` (custom ranges), `months_ago` (explicit month picking) |
 | `0009_schedule_range_mode_custom.sql` | Rebuilds `schedules` to allow `range_mode = 'custom'` (SQLite can't ALTER a CHECK constraint) |
 | `0010_schedule_range_times.sql` | `schedules.since_time`/`until_time` (intra-day bounds for custom ranges) |
+| `0011_schedule_credentials.sql` | `schedules.api_token`/`account_id` (per-schedule customer credentials) |
 
 ### 3. Worker build and deploy
 
@@ -674,6 +675,28 @@ pageViews. Cloudflare retains adaptive (fine-grained) data only ~30 days
 back; older ranges keep accurate daily totals but per-request sections come
 back empty (each shows its own upstream error).
 
+### Scheduled report credentials (multi-customer)
+
+`POST`/`PUT /api/schedules` accept two optional fields:
+
+- `apiToken` — a Cloudflare API token scoped to a **customer's** account.
+  Write-only: stored in D1 (`schedules.api_token`), never returned by the API
+  (a masked hint `apiTokenHint` + `apiTokenSet` flag are returned instead).
+  On `PUT`, omitting the field keeps the stored token; `null` clears it back
+  to the backend credentials; a string sets/replaces it.
+- `accountId` — the customer's Cloudflare account ID (needed for Zero Trust
+  reports and account-level AppSec queries).
+
+At send time the scheduler resolves credentials per schedule: the schedule's
+own token/account if set, otherwise the backend credentials (Settings → D1 →
+`CF_API_TOKEN` secret / `CF_ACCOUNT_ID` var). One deployment can therefore
+run reports for many customers, each with least-privilege credentials —
+recommended token scopes are the same as the backend token's, on the
+customer's account only. `POST /api/settings/test` also accepts
+`{ cfApiToken, cfAccountId }` to validate candidate credentials without
+saving them, and `POST /api/schedule/zones` lists a customer's zones with
+their token before you save it.
+
 ### Finding registers (D1-backed lifecycle tracking)
 
 | Route | Purpose |
@@ -694,7 +717,7 @@ back empty (each shows its own upstream error).
 
 | Route | Purpose |
 |---|---|
-| `GET /api/schedule/zones` | Zone picker using the backend token |
+| `GET\|POST /api/schedule/zones` | Zone picker — GET uses backend credentials; POST accepts `{ apiToken, accountId }` (customer-scoped, multi-customer) |
 | `GET /api/schedules` · `POST /api/schedules` | List / create |
 | `PUT /api/schedules/:id` · `DELETE /api/schedules/:id` | Update / delete |
 | `POST /api/schedules/:id/send` ⏱ | Send test now (full report generation) |
