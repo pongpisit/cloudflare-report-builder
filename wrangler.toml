@@ -54,6 +54,9 @@ crons = ["0 * * * *"]
 # the API — no separate Pages project, no CORS. Build the frontend first
 # (`npm run build`) so this directory exists before `wrangler deploy`.
 [assets]
+# Exposed to the Worker as env.ASSETS — the scheduled-email attachment
+# builder reads the single-chunk static-report bundle through this binding.
+binding = "ASSETS"
 directory = "apps/web/dist"
 not_found_handling = "single-page-application"
 # /api/* and /health always run the Worker (Hono app below); every other

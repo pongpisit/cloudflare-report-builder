@@ -34,6 +34,7 @@ import {
   renderZtFullReport,
   type FullReportParams,
 } from "./services/full-report-html";
+import { buildEmbeddedReportAttachment } from "./services/attachment-builder";
 import { sendReportEmail } from "./services/send-report-email";
 import { getEffectiveBackendConfig } from "./services/settings";
 import type { ReportPeriod } from "./services/cf-graphql";
@@ -279,9 +280,39 @@ export async function runSchedule(
       clientName: row.client_name,
       aiSummary,
     };
-    const fullHtml = appsec
-      ? renderAppsecFullReport(appsec, fullParams)
-      : renderZtFullReport(zt as Awaited<ReturnType<typeof generateZerotrustData>>, fullParams);
+    // Attachment = the on-demand report itself: the single-chunk web bundle +
+    // this run's data, rendered by the recipient's browser on open. Falls
+    // back to the server-rendered full-report HTML only if the static bundle
+    // can't be fetched from the ASSETS binding.
+    const inputForEmbedded = {
+      token: "",
+      zoneId: row.zone_id ?? "",
+      accountId: row.account_id ?? "",
+      days: row.days,
+      tzOffset,
+      rangeMode: row.range_mode ?? "rolling",
+      isPoc,
+      clientName: row.client_name ?? undefined,
+      product: row.report_type,
+    };
+    const fullHtml =
+      (await buildEmbeddedReportAttachment(
+        env,
+        {
+          kind: row.report_type === "appsec" ? "appsec" : "zero-trust",
+          data: appsec ?? zt,
+          input: inputForEmbedded,
+          aiSummary,
+          generatedAt: (appsec?.meta?.generatedAt ?? zt?.meta?.generatedAt) ?? new Date().toISOString(),
+          scheduleName: row.name,
+        },
+        row.report_type === "appsec"
+          ? `App Security Report — ${appsec?.meta?.zoneName ?? "Zone"}`
+          : `Cloudflare One Report — ${zt?.meta?.accountName ?? "Account"}`
+      ))
+      ?? (appsec
+        ? renderAppsecFullReport(appsec, fullParams)
+        : renderZtFullReport(zt as Awaited<ReturnType<typeof generateZerotrustData>>, fullParams));
     const attachmentDate = (appsec ? appsec.meta?.until : zt?.meta?.until)
       ?? new Date().toISOString().slice(0, 10);
 

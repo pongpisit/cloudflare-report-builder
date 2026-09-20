@@ -9,16 +9,45 @@ import type { AppSecData, ZeroTrustData, ReportInput } from "./types";
 
 type Phase = "home" | "loading" | "report" | "schedules";
 
+/**
+ * EMBEDDED REPORT — set by scheduled-email attachments: the single-chunk app
+ * bundle (vite.static.config.ts) plus the generated report data inlined into
+ * one self-contained HTML file. When present, the app boots straight into the
+ * report — the exact same components the on-demand page renders — with no
+ * network access: the recipient's browser does the rendering at open time.
+ */
+export interface EmbeddedReport {
+  kind: "appsec" | "zero-trust";
+  data: unknown;
+  input: ReportInput;
+  aiSummary?: string;
+  generatedAt: string;
+  scheduleName: string;
+}
+
+const EMBEDDED_REPORT =
+  typeof window !== "undefined"
+    ? (window as { __EMBEDDED_REPORT__?: EmbeddedReport }).__EMBEDDED_REPORT__
+    : undefined;
+
 export default function App() {
-  const [phase, setPhase]             = useState<Phase>("home");
+  const [phase, setPhase]             = useState<Phase>(EMBEDDED_REPORT ? "report" : "home");
   const [error, setError]             = useState<string>("");
-  const [appsecData, setAppsecData]   = useState<AppSecData | null>(null);
-  const [ztData, setZtData]           = useState<ZeroTrustData | null>(null);
-  const [reportInput, setReportInput] = useState<ReportInput | null>(null);
+  const [appsecData, setAppsecData]   = useState<AppSecData | null>(
+    EMBEDDED_REPORT?.kind === "appsec" ? (EMBEDDED_REPORT.data as AppSecData) : null
+  );
+  const [ztData, setZtData]           = useState<ZeroTrustData | null>(
+    EMBEDDED_REPORT?.kind === "zero-trust" ? (EMBEDDED_REPORT.data as ZeroTrustData) : null
+  );
+  const [reportInput, setReportInput] = useState<ReportInput | null>(EMBEDDED_REPORT?.input ?? null);
   const [userEmail, setUserEmail]     = useState<string | null>(null);
   const [accessExpired, setAccessExpired] = useState(false);
 
+  // Skipped in embedded (scheduled attachment) mode: there is no backend to
+  // ask, and no session either — the report renders straight from the
+  // embedded data.
   useEffect(() => {
+    if (EMBEDDED_REPORT) return;
     fetchUserEmail().then(setUserEmail).catch(() => setUserEmail(null));
   }, []);
 

@@ -4,6 +4,9 @@ export interface Env {
   ENVIRONMENT: string;
   ALLOWED_ORIGIN: string;
   AUDIT_BUCKET: R2Bucket;
+  /** Workers static assets — the deployed web build, including the
+   *  single-chunk static-report bundle used for scheduled email attachments. */
+  ASSETS: Fetcher;
   /** D1 — scheduled report configuration + send history */
   DB: D1Database;
   /** Cloudflare Email Sending binding — delivers scheduled report emails */

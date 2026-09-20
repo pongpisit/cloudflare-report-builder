@@ -73,7 +73,14 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
   // Unchecked = neutral assessment report without those sections/wording.
   const isPoc = input.isPoc !== false;
 
-  useEffect(() => { generateSummary(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // Embedded (scheduled attachment) mode: summary generated at send time,
+  // no backend to call.
+  const EMBEDDED = (window as { __EMBEDDED_REPORT__?: { aiSummary?: string } }).__EMBEDDED_REPORT__;
+  useEffect(() => {
+    if (EMBEDDED) { setAiSummary(EMBEDDED.aiSummary ?? ""); return; }
+    generateSummary();
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
 
   async function generateSummary() {
     setAiLoading(true); setAiError("");

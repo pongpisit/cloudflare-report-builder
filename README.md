@@ -603,13 +603,20 @@ recipients, subject, and an optional custom message.
 - **"Send test now"**: generates and sends immediately, recorded as a
   `manual` run in history — use this to verify recipients/formatting before
   trusting the cron.
-- **Full report attached**: every scheduled email carries the complete report
-  as a standalone `.html` attachment — the same generated data the on-demand
-  dashboard renders, as a browser-openable document (KPI grid, pure-CSS daily
-  charts, ranked tables for every section, honest empty states where data is
-  unavailable). The email body stays the compact email-safe digest, since
-  email clients strip `<style>` and JS.
-- **Archive**: every scheduled send's full report AND digest are snapshotted
+- **Full report attached — the on-demand report itself**: every scheduled
+  email carries the complete report as a standalone `.html` attachment.
+  The Worker can't execute the React app, but an attachment opens in the
+  recipient's browser, which can: the attachment is the single-chunk build
+  of the web app (vite.static.config.ts) plus the run's report data inlined
+  as `window.__EMBEDDED_REPORT__`, and on open it renders the exact same
+  report the on-demand page renders — same components, same recharts charts,
+  same styling, with the AI summary generated at send time and no network
+  access. Assembled from the Worker's own `ASSETS` binding (deterministic
+  `static-report/app.js|css` names, `</script>` sequences defused, JSON
+  `<` escaped); falls back to a server-rendered full-report HTML when the
+  static bundle isn't deployed. The email body stays the compact email-safe
+  digest, since email clients strip `<style>` and JS.
+- **Archive**: every scheduled send's embedded on-demand report AND digest are snapshotted
   to the R2 audit bucket under `scheduled/` (the full report as the primary
   artifact, `-full` suffix).
 - See `apps/api/src/scheduler.ts` for the full implementation.
