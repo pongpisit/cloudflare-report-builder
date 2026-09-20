@@ -6,10 +6,10 @@
  * The Cloudflare API token used for generation is bound on the backend —
  * nothing sensitive is entered or stored here.
  */
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Shield, Globe, Clock, Plus, Pencil, Trash2, History, Send, Loader2,
-  AlertCircle, CheckCircle, X, Mail, Calendar, User, ArrowLeft, KeyRound, Settings,
+  AlertCircle, CheckCircle, X, Mail, Calendar, User, ArrowLeft, KeyRound, Settings, Upload,
 } from "lucide-react";
 import type { ScheduleConfig, ScheduleInput, ScheduleHistoryEntry, ZoneOption, ScheduleReportType, ScheduleFrequency, ReportRangeMode, ReportPeriod } from "../types";
 import {
@@ -566,6 +566,7 @@ function configToInput(s: ScheduleConfig, enabledOverride?: boolean): ScheduleIn
     message: s.message,
     isPoc: s.isPoc,
     clientName: s.clientName,
+    clientLogo: s.clientLogo,
     enabled: enabledOverride ?? s.enabled,
   };
 }
@@ -608,6 +609,25 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
   const [message, setMessage] = useState(initial?.message ?? "");
   const [isPoc, setIsPoc] = useState(initial?.isPoc ?? true);
   const [clientName, setClientName] = useState(initial?.clientName ?? "");
+  // Client branding — same rules as the on-demand form: data URI ≤2MB,
+  // PNG/JPG/SVG/WebP. Stored on the schedule; rendered on the email cover
+  // and the attached on-demand report.
+  const [clientLogo, setClientLogo] = useState(initial?.clientLogo ?? "");
+  const [logoFileName, setLogoFileName] = useState(initial?.clientLogo ? "stored logo" : "");
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { setFormError("Logo must be under 2MB"); return; }
+    if (!["image/png", "image/jpeg", "image/svg+xml", "image/webp"].includes(file.type)) {
+      setFormError("Only PNG, JPG, SVG, or WebP logos are supported");
+      return;
+    }
+    setLogoFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => { setClientLogo(reader.result as string); setFormError(""); };
+    reader.readAsDataURL(file);
+  }
   const [enabled, setEnabled] = useState(initial?.enabled ?? true);
 
   // Per-schedule customer credentials (multi-customer). The stored token is
@@ -700,6 +720,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       message,
       isPoc,
       clientName: clientName.trim() || null,
+      clientLogo: clientLogo || null,
       enabled,
       accountId: accountId.trim() || null,
       ...(apiToken ? { apiToken: apiToken.trim() } : {}),
@@ -1180,6 +1201,30 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
             <label className="ar-input-label"><User size={10} style={{ display: "inline", marginRight: 4 }} /> Client Name (optional)</label>
             <input type="text" value={clientName} onChange={(e) => setClientName(e.target.value)}
               placeholder="e.g. Acme Corp" className="ar-input" maxLength={200} />
+            <div style={{ marginTop: 8 }}>
+              <input ref={logoInputRef} type="file"
+                accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                onChange={handleLogoUpload} style={{ display: "none" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => logoInputRef.current?.click()}
+                  className="ar-btn-ghost" style={{ padding: "8px 12px 6px", fontSize: 10 }}>
+                  <Upload size={11} /> {clientLogo ? "Change Logo" : "Upload Logo"}
+                </button>
+                {clientLogo && (
+                  <>
+                    <img src={clientLogo} alt="Logo" style={{ height: 28, width: 28, objectFit: "contain" }} />
+                    <span style={{ fontSize: 11, color: "#5d5e65" }}>{logoFileName}</span>
+                    <button type="button" onClick={() => { setClientLogo(""); setLogoFileName(""); }}
+                      style={{ fontSize: 11, color: "#d51121", background: "none", border: "none", cursor: "pointer" }}>
+                      Remove
+                    </button>
+                  </>
+                )}
+              </div>
+              <p style={{ fontSize: 10, color: "#5d5e65", margin: "6px 0 0" }}>
+                Shown on the email cover and the attached report (PNG/JPG/SVG/WebP, under 2MB).
+              </p>
+            </div>
           </div>
           {initial && (
             <div>

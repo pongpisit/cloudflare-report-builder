@@ -343,6 +343,7 @@ ADD COLUMN` with defaults):
 | `0010_schedule_range_times.sql` | `schedules.since_time`/`until_time` (intra-day bounds for custom ranges) |
 | `0011_schedule_credentials.sql` | `schedules.api_token`/`account_id` (per-schedule customer credentials) |
 | `0012_schedule_range_mode_period.sql` | Rebuilds `schedules` to allow `range_mode = 'period'` (SQLite CHECK constraint) + `period` column |
+| `0013_schedule_client_logo.sql` | `schedules.client_logo` (per-schedule branding data URI) |
 
 ### 3. Worker build and deploy
 
@@ -592,7 +593,11 @@ recipients, subject, and an optional custom message.
   real 28–31 day count and a proper period label like "August 2026"), or
   **an exact custom range** — start/end dates up to 366 days apart plus
   optional HH:MM times (e.g. "Sep 1 09:00 → Sep 3 17:30"), interpreted in
-  the schedule's timezone. Every adaptive-dataset
+  the schedule's timezone.
+- **Client branding**: each schedule can carry the customer's logo (data
+  URI, ≤2MB PNG/JPG/SVG/WebP) alongside the client name — rendered on the
+  email digest cover AND the attached on-demand report, matching the
+  on-demand form's cover. Same validation as the interactive builder. Every adaptive-dataset
   section follows the exact window (local days + intra-day bounds); only
   the daily-overview and error charts (1dGroups, whole days by dataset
   design) don't — they switch to exact hourly buckets for ≤1-day windows.

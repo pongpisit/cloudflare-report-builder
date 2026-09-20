@@ -238,6 +238,7 @@ export async function runSchedule(
         message: row.message ?? "",
         isPoc,
         clientName: row.client_name,
+        clientLogo: row.client_logo ?? undefined,
         aiSummary,
       };
       rendered = renderAppsecEmail(appsec, params);
@@ -263,6 +264,7 @@ export async function runSchedule(
         message: row.message ?? "",
         isPoc,
         clientName: row.client_name,
+        clientLogo: row.client_logo ?? undefined,
         aiSummary,
       };
       rendered = renderZtEmail(zt, params);
@@ -293,6 +295,7 @@ export async function runSchedule(
       rangeMode: row.range_mode ?? "rolling",
       isPoc,
       clientName: row.client_name ?? undefined,
+      clientLogo: row.client_logo ?? undefined,
       product: row.report_type,
     };
     const fullHtml =

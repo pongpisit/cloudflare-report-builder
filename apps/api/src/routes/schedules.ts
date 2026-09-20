@@ -63,6 +63,7 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     untilTime: row.until_time ?? null,
     monthsAgo: row.months_ago ?? null,
     period: row.period ?? null,
+    clientLogo: row.client_logo ?? null,
     // Per-schedule credentials — the token VALUE never leaves the backend.
     apiTokenSet: !!row.api_token,
     apiTokenHint: row.api_token ? `••••••••${row.api_token.slice(-4)}` : null,
@@ -96,6 +97,7 @@ interface ValidatedSchedule {
   untilTime: string | null;
   monthsAgo: number | null;
   period: string | null;
+  clientLogo: string | null;
   /** undefined = keep existing on update (create: none); null = clear; string = set */
   apiToken: string | null | undefined;
   accountId: string | null;
@@ -251,6 +253,17 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
     accountId = b.accountId.trim() || null;
   }
 
+  // Client branding: same rules as the on-demand form — a base64 data URI
+  // (data:image/...) up to 2MB. Full replacement (null clears).
+  let clientLogo: string | null = null;
+  if (b.clientLogo !== undefined && b.clientLogo !== null && b.clientLogo !== "") {
+    if (typeof b.clientLogo !== "string")
+      return { error: "clientLogo must be a data-URI string or null" };
+    if (clientLogoTooLargeOrNotAnImage(b.clientLogo))
+      return { error: "clientLogo must be an image data URI (data:image/...) under 2MB" };
+    clientLogo = b.clientLogo;
+  }
+
   const isPoc = b.isPoc === undefined ? true : b.isPoc !== false;
   const enabled = b.enabled === undefined ? true : b.enabled !== false;
 
@@ -260,9 +273,16 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
       isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
       sinceDate, untilDate, sinceTime, untilTime, monthsAgo,
-      period, apiToken, accountId,
+      period, clientLogo, apiToken, accountId,
     },
   };
+}
+
+// ≤2MB data URI starting with data:image/ (matches the on-demand form's rules).
+function clientLogoTooLargeOrNotAnImage(logo: string): boolean {
+  if (!logo.startsWith("data:image/")) return true;
+  // data URIs are ~4/3 the raw bytes; 2MB raw ≈ 2.7M chars — allow headroom.
+  return logo.length > 2_800_000;
 }
 
 // ─── GET /api/schedules ────────────────────────────────────────────────────────
@@ -294,8 +314,8 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
         is_poc, client_name, enabled, created_at, updated_at, range_mode,
         since_date, until_date, since_time, until_time, months_ago, period,
-        api_token, account_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        client_logo, api_token, account_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
@@ -303,7 +323,7 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
       data.sendHourUtc, data.recipients, data.subject, data.message,
       data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode,
       data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
-      data.apiToken ?? null, data.accountId
+      data.clientLogo, data.apiToken ?? null, data.accountId
     )
     .run();
 
@@ -337,7 +357,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
        enabled = ?, updated_at = ?, range_mode = ?,
        since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?, period = ?,
-       api_token = ?, account_id = ?
+       client_logo = ?, api_token = ?, account_id = ?
      WHERE id = ?`
   )
     .bind(
@@ -346,7 +366,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
       data.enabled, now, data.rangeMode,
       data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
-      apiToken, data.accountId, id
+      data.clientLogo, apiToken, data.accountId, id
     )
     .run();
 

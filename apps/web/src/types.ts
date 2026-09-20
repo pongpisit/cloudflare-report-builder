@@ -788,6 +788,8 @@ export interface ScheduleConfig {
   monthsAgo: number | null;
   /** Period mode choice (null in other modes). */
   period: string | null;
+  /** Client branding logo (base64 data URI) rendered on the report cover. */
+  clientLogo: string | null;
   /** True when this schedule carries its own API token (value never returned). */
   apiTokenSet: boolean;
   /** Masked hint ("••••••••xxxx") when a per-schedule token is stored. */
@@ -812,6 +814,8 @@ export interface ScheduleInput {
   monthsAgo?: number | null;
   /** rangeMode "period": yesterday | last_week | last_month. */
   period?: ReportPeriod | null;
+  /** Client branding logo (data URI). null clears. */
+  clientLogo?: string | null;
   frequency: ScheduleFrequency;
   dayOfWeek: number | null;
   dayOfMonth: number | null;

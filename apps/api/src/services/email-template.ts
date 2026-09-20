@@ -16,6 +16,9 @@ export interface ReportEmailParams {
   message: string;          // custom message from the schedule config
   isPoc: boolean;
   clientName?: string | null;
+  /** Client branding logo (base64 data URI) — rendered on the email cover.
+   *  Most modern email clients render data URIs; blocked ones show alt text. */
+  clientLogo?: string;
   aiSummary: string;         // may be "" when Workers AI was unavailable
 }
 
@@ -179,6 +182,9 @@ function buildShell(p: ShellParams): { html: string; text: string } {
   <!-- Header -->
   <tr><td style="background-color:#1c1f2a;padding:30px 32px;">
     <div style="font:bold 11px/1 Helvetica,Arial,sans-serif;letter-spacing:3px;text-transform:uppercase;color:#ba0816;">Cloudflare</div>
+    ${p.params.clientLogo
+      ? `<img src="${p.params.clientLogo}" alt="${escapeHtml(p.params.clientName ?? "Client logo")}" style="display:block;margin:12px 0 0;max-height:64px;max-width:220px;border:0;"/>`
+      : ""}
     <h1 style="margin:10px 0 0;font:bold 22px/1.25 Helvetica,Arial,sans-serif;color:#f4f4f4;letter-spacing:-0.02em;">${escapeHtml(p.title)}</h1>
     <p style="margin:8px 0 0;font:12px/1.4 Helvetica,Arial,sans-serif;color:rgba(244,244,244,0.55);">${escapeHtml(p.subtitle)}</p>
   </td></tr>

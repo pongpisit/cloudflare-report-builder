@@ -71,6 +71,7 @@ export interface ScheduleRow {
   until_time: string | null;
   months_ago: number | null;
   period: string | null;         // period mode: yesterday | last_week | last_month
+  client_logo: string | null;    // per-schedule branding: base64 data URI for the report cover
   api_token: string | null;      // per-schedule customer token (write-only via API)
   account_id: string | null;     // per-schedule customer account (falls back to backend)
 }
@@ -107,6 +108,8 @@ export interface ScheduleConfig {
   monthsAgo: number | null;
   /** Period mode choice: yesterday | last_week | last_month (null in other modes). */
   period: string | null;
+  /** Client branding logo (base64 data URI) rendered on the report cover. */
+  clientLogo: string | null;
   /** True when this schedule carries its own API token (value never returned). */
   apiTokenSet: boolean;
   /** Masked hint ("••••••••xxxx") when a per-schedule token is stored. */
