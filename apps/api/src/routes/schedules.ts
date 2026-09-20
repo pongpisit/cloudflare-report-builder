@@ -62,6 +62,7 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     sinceTime: row.since_time ?? null,
     untilTime: row.until_time ?? null,
     monthsAgo: row.months_ago ?? null,
+    period: row.period ?? null,
     // Per-schedule credentials — the token VALUE never leaves the backend.
     apiTokenSet: !!row.api_token,
     apiTokenHint: row.api_token ? `••••••••${row.api_token.slice(-4)}` : null,
@@ -94,6 +95,7 @@ interface ValidatedSchedule {
   sinceTime: string | null;
   untilTime: string | null;
   monthsAgo: number | null;
+  period: string | null;
   /** undefined = keep existing on update (create: none); null = clear; string = set */
   apiToken: string | null | undefined;
   accountId: string | null;
@@ -141,6 +143,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
   const rangeMode: ReportRangeMode =
     b.rangeMode === "calendar_month" ? "calendar_month"
     : b.rangeMode === "custom" ? "custom"
+    : b.rangeMode === "period" ? "period"
     : "rolling";
 
   let sinceDate: string | null = null;
@@ -148,8 +151,14 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
   let sinceTime: string | null = null;
   let untilTime: string | null = null;
   let monthsAgo: number | null = null;
+  let period: string | null = null;
   let days: number;
-  if (rangeMode === "custom") {
+  if (rangeMode === "period") {
+    if (b.period !== "yesterday" && b.period !== "last_week" && b.period !== "last_month")
+      return { error: 'rangeMode "period" requires period: "yesterday", "last_week" or "last_month"' };
+    period = b.period;
+    days = 1; // display default — the real window is computed at run time
+  } else if (rangeMode === "custom") {
     if (typeof b.sinceDate !== "string" || typeof b.untilDate !== "string")
       return { error: 'rangeMode "custom" requires sinceDate and untilDate (YYYY-MM-DD)' };
     if (typeof b.sinceTime === "string") sinceTime = b.sinceTime;
@@ -251,7 +260,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
       isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
       sinceDate, untilDate, sinceTime, untilTime, monthsAgo,
-      apiToken, accountId,
+      period, apiToken, accountId,
     },
   };
 }
@@ -284,16 +293,16 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
        (id, name, report_type, zone_id, zone_name, days, tz_offset, frequency,
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
         is_poc, client_name, enabled, created_at, updated_at, range_mode,
-        since_date, until_date, since_time, until_time, months_ago,
+        since_date, until_date, since_time, until_time, months_ago, period,
         api_token, account_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
       data.tzOffset, data.frequency, data.dayOfWeek, data.dayOfMonth,
       data.sendHourUtc, data.recipients, data.subject, data.message,
       data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode,
-      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo,
+      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
       data.apiToken ?? null, data.accountId
     )
     .run();
@@ -327,7 +336,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        frequency = ?, day_of_week = ?, day_of_month = ?, send_hour_utc = ?,
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
        enabled = ?, updated_at = ?, range_mode = ?,
-       since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?,
+       since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?, period = ?,
        api_token = ?, account_id = ?
      WHERE id = ?`
   )
@@ -336,7 +345,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
       data.frequency, data.dayOfWeek, data.dayOfMonth, data.sendHourUtc,
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
       data.enabled, now, data.rangeMode,
-      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo,
+      data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
       apiToken, data.accountId, id
     )
     .run();

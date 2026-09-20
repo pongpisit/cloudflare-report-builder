@@ -192,7 +192,7 @@ const MONTH_NAMES = [
  *                    is NOT bounded specially, so callers needing "last
  *                    month" should always pass the default.
  */
-export function lastCalendarMonth(tzOffset = 0, monthsAgo = 1): {
+export function lastCalendarMonth(tzOffset = 0, monthsAgo = 1, nowMs = Date.now()): {
   since: string;        // YYYY-MM-DD — first day of the target month (local)
   until: string;        // YYYY-MM-DD — last day of the target month (local)
   untilQuery: string;   // YYYY-MM-DD — for date_lt queries = first day of the FOLLOWING month
@@ -201,10 +201,9 @@ export function lastCalendarMonth(tzOffset = 0, monthsAgo = 1): {
   days: number;         // real day count for this specific month (28-31)
   periodLabel: string;  // e.g. "August 2026"
 } {
-  const utcNow = Date.now();
   // Same "local-wall-clock-as-UTC" trick as last30Days(): shifting by
   // -tzOffset minutes lets getUTC*() read out local wall-clock components.
-  const localNow = new Date(utcNow - tzOffset * 60 * 1000);
+  const localNow = new Date(nowMs - tzOffset * 60 * 1000);
   const localYear  = localNow.getUTCFullYear();
   const localMonth = localNow.getUTCMonth(); // 0-11
 
@@ -231,6 +230,94 @@ export function lastCalendarMonth(tzOffset = 0, monthsAgo = 1): {
     untilTs: new Date(realEndExclusiveUtcMs - 1).toISOString(),
     days,
     periodLabel: `${MONTH_NAMES[targetMonth]} ${targetYear}`,
+  };
+}
+
+// ─── Period mode: the last COMPLETE period, computed at run time ──────────────
+/**
+ * Period mode windows. Unlike rolling windows these are not anchored to
+ * "now minus N days", and unlike custom ranges the bounds aren't frozen at
+ * save time — "yesterday" always means the day before the run, so a daily
+ * schedule keeps reporting full 00:00–23:59:59 local days forever. All
+ * boundaries are in the caller's (the schedule's) timezone:
+ *
+ *   yesterday   — the previous local calendar day, 00:00:00–23:59:59.999
+ *   last_week   — the previous Monday–Sunday, both boundaries local midnight
+ *   last_month  — the previous local calendar month (real 28–31 days);
+ *                 identical math to lastCalendarMonth(tzOffset, 1)
+ */
+export type ReportPeriod = "yesterday" | "last_week" | "last_month";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function lastPeriodRange(
+  period: ReportPeriod,
+  tzOffset = 0,
+  nowMs = Date.now()
+): {
+  since: string;
+  until: string;
+  untilQuery: string;
+  sinceTs: string;
+  untilTs: string;
+  days: number;
+  periodLabel: string;
+} {
+  if (period === "last_month") {
+    const m = lastCalendarMonth(tzOffset, 1, nowMs);
+    return { ...m, periodLabel: `Last month (${m.periodLabel})` };
+  }
+
+  // Local wall clock, same "localNow-as-UTC" trick as lastCalendarMonth().
+  const localNow = new Date(nowMs - tzOffset * 60 * 1000);
+  const todayStartLocalMs = Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), localNow.getUTCDate());
+
+  let startLocalMs: number;
+  let days: number;
+  if (period === "yesterday") {
+    startLocalMs = todayStartLocalMs - DAY_MS;
+    days = 1;
+  } else {
+    // last_week: Monday–Sunday. (w - 1 + 7) % 7 maps Mon→0 … Sun→6, so this
+    // week's Monday is found even mid-week, and "today is Monday" correctly
+    // yields the FULL week that ended yesterday.
+    const w = localNow.getUTCDay();
+    const daysSinceMonday = (w - 1 + 7) % 7;
+    const thisMonday = todayStartLocalMs - daysSinceMonday * DAY_MS;
+    startLocalMs = thisMonday - 7 * DAY_MS;
+    days = 7;
+  }
+
+  const endExclusiveLocalMs = startLocalMs + days * DAY_MS;
+  // Real UTC instants — same inverse shift as lastCalendarMonth().
+  const sinceTsMs = startLocalMs + tzOffset * 60 * 1000;
+  const endExclusiveTsMs = endExclusiveLocalMs + tzOffset * 60 * 1000;
+
+  // Date labels reuse customDateRange's formatting rules.
+  const s = new Date(startLocalMs);
+  const e = new Date(endExclusiveLocalMs - DAY_MS);
+  const d = (n: number) => String(n);
+  let windowLabel: string;
+  if (days === 1) {
+    windowLabel = `${MONTH_ABBR[s.getUTCMonth()]} ${d(s.getUTCDate())}, ${s.getUTCFullYear()}`;
+  } else if (s.getUTCFullYear() === e.getUTCFullYear() && s.getUTCMonth() === e.getUTCMonth()) {
+    windowLabel = `${MONTH_ABBR[s.getUTCMonth()]} ${d(s.getUTCDate())}–${d(e.getUTCDate())}, ${s.getUTCFullYear()}`;
+  } else if (s.getUTCFullYear() === e.getUTCFullYear()) {
+    windowLabel = `${MONTH_ABBR[s.getUTCMonth()]} ${d(s.getUTCDate())} – ${MONTH_ABBR[e.getUTCMonth()]} ${d(e.getUTCDate())}, ${s.getUTCFullYear()}`;
+  } else {
+    windowLabel = `${MONTH_ABBR[s.getUTCMonth()]} ${d(s.getUTCDate())}, ${s.getUTCFullYear()} – ${MONTH_ABBR[e.getUTCMonth()]} ${d(e.getUTCDate())}, ${e.getUTCFullYear()}`;
+  }
+  const periodLabel =
+    period === "yesterday" ? `Yesterday (${windowLabel})` : `Last week (${windowLabel})`;
+
+  return {
+    since: new Date(startLocalMs).toISOString().split("T")[0],
+    until: new Date(endExclusiveLocalMs - DAY_MS).toISOString().split("T")[0],
+    untilQuery: new Date(endExclusiveLocalMs).toISOString().split("T")[0],
+    sinceTs: new Date(sinceTsMs).toISOString(),
+    untilTs: new Date(endExclusiveTsMs - 1).toISOString(),
+    days,
+    periodLabel,
   };
 }
 

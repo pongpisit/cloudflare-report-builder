@@ -37,7 +37,7 @@ import {
   fetchGenAiUsage,
 } from "../services/cf-zerotrust-graphql";
 
-import { last30Days as l30, lastCalendarMonth, customDateRange } from "../services/cf-graphql";
+import { last30Days as l30, lastCalendarMonth, lastPeriodRange, customDateRange, type ReportPeriod } from "../services/cf-graphql";
 import { getBaseline, saveSnapshot } from "../services/zt-snapshots";
 import { syncRemediationFindings, getRemediationRegister, type RemediationFinding } from "../services/zt-remediation";
 import { syncCasbFindings, getCasbFindingRegister, type CasbFindingInput } from "../services/zt-casb-tracking";
@@ -70,8 +70,8 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
   try { body = await c.req.json(); }
   catch { return c.json({ error: "Invalid JSON body" }, 400); }
 
-  const { token, accountId, days: rawDays, tzOffset = 0, rangeMode: rawRangeMode, sinceDate: rawSinceDate, untilDate: rawUntilDate, sinceTime: rawSinceTime, untilTime: rawUntilTime, monthsAgo: rawMonthsAgo } =
-    body as { token?: string; accountId?: string; days?: number; tzOffset?: number; rangeMode?: string; sinceDate?: string; untilDate?: string; sinceTime?: string; untilTime?: string; monthsAgo?: number };
+  const { token, accountId, days: rawDays, tzOffset = 0, rangeMode: rawRangeMode, sinceDate: rawSinceDate, untilDate: rawUntilDate, sinceTime: rawSinceTime, untilTime: rawUntilTime, monthsAgo: rawMonthsAgo, period: rawPeriod } =
+    body as { token?: string; accountId?: string; days?: number; tzOffset?: number; rangeMode?: string; sinceDate?: string; untilDate?: string; sinceTime?: string; untilTime?: string; monthsAgo?: number; period?: string };
 
   if (!token || typeof token !== "string" || token.length < 10)
     return c.json({ error: "Missing or invalid token" }, 400);
@@ -83,7 +83,14 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
   const rangeMode: ReportRangeMode =
     rawRangeMode === "calendar_month" ? "calendar_month"
     : rawRangeMode === "custom" ? "custom"
+    : rawRangeMode === "period" ? "period"
     : "rolling";
+  let period: ReportPeriod | undefined;
+  if (rangeMode === "period") {
+    if (rawPeriod !== "yesterday" && rawPeriod !== "last_week" && rawPeriod !== "last_month")
+      return c.json({ error: 'rangeMode "period" requires period: "yesterday", "last_week" or "last_month".' }, 400);
+    period = rawPeriod;
+  }
 
   let sinceDate: string | undefined;
   let untilDate: string | undefined;
@@ -107,7 +114,7 @@ export async function handleFetchZeroTrust(c: Context<{ Bindings: Env }>) {
     monthsAgo = parsed;
   }
 
-  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, sinceTime, untilTime, monthsAgo, db: c.env.DB });
+  const zerotrust = await generateZerotrustData({ token, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, sinceTime, untilTime, monthsAgo, period, db: c.env.DB });
   return c.json({ ok: true, zerotrust });
 }
 
@@ -128,6 +135,9 @@ export async function generateZerotrustData(input: {
   /** rangeMode "calendar_month": which month — 1 = last month (default),
    *  2 = the month before that, etc. (1..12). */
   monthsAgo?: number;
+  /** rangeMode "period": the last COMPLETE period, computed at run time in
+   *  tzOffset's timezone — yesterday / last_week (Mon–Sun) / last_month. */
+  period?: ReportPeriod;
   /** rangeMode "custom": first day, YYYY-MM-DD local. */
   sinceDate?: string;
   /** rangeMode "custom": last day, YYYY-MM-DD local (inclusive; may be today). */
@@ -145,6 +155,8 @@ export async function generateZerotrustData(input: {
   type DatedRange = ReturnType<typeof l30>;
   const dateRange: DatedRange =
     rangeMode === "calendar_month" ? (lastCalendarMonth(tzOffset, input.monthsAgo ?? 1) as unknown as DatedRange)
+    : rangeMode === "period"
+      ? (lastPeriodRange((input.period ?? "yesterday") as ReportPeriod, tzOffset) as unknown as DatedRange)
     : rangeMode === "custom"
       ? ((input.sinceDate && input.untilDate
           ? customDateRange(input.sinceDate, input.untilDate, tzOffset, input.sinceTime, input.untilTime)

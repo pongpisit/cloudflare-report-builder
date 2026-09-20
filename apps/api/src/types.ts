@@ -35,7 +35,7 @@ export type ScheduleReportType = "appsec" | "zero-trust";
 // whichever the month actually has) — see lastCalendarMonth() in
 // cf-graphql.ts. Fixes monthly-frequency schedules silently drifting off
 // true month boundaries when using a fixed 30-day rolling window.
-export type ReportRangeMode = "rolling" | "calendar_month" | "custom";
+export type ReportRangeMode = "rolling" | "calendar_month" | "custom" | "period";
 
 /** Raw D1 row from the `schedules` table */
 export interface ScheduleRow {
@@ -67,6 +67,7 @@ export interface ScheduleRow {
   since_time: string | null;
   until_time: string | null;
   months_ago: number | null;
+  period: string | null;         // period mode: yesterday | last_week | last_month
   api_token: string | null;      // per-schedule customer token (write-only via API)
   account_id: string | null;     // per-schedule customer account (falls back to backend)
 }
@@ -101,6 +102,8 @@ export interface ScheduleConfig {
   sinceTime: string | null;
   untilTime: string | null;
   monthsAgo: number | null;
+  /** Period mode choice: yesterday | last_week | last_month (null in other modes). */
+  period: string | null;
   /** True when this schedule carries its own API token (value never returned). */
   apiTokenSet: boolean;
   /** Masked hint ("••••••••xxxx") when a per-schedule token is stored. */

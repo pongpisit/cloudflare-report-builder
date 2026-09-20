@@ -342,6 +342,7 @@ ADD COLUMN` with defaults):
 | `0009_schedule_range_mode_custom.sql` | Rebuilds `schedules` to allow `range_mode = 'custom'` (SQLite can't ALTER a CHECK constraint) |
 | `0010_schedule_range_times.sql` | `schedules.since_time`/`until_time` (intra-day bounds for custom ranges) |
 | `0011_schedule_credentials.sql` | `schedules.api_token`/`account_id` (per-schedule customer credentials) |
+| `0012_schedule_range_mode_period.sql` | Rebuilds `schedules` to allow `range_mode = 'period'` (SQLite CHECK constraint) + `period` column |
 
 ### 3. Worker build and deploy
 
@@ -584,11 +585,14 @@ recipients, subject, and an optional custom message.
 - **Cadence**: daily / weekly / monthly, evaluated in the schedule's
   captured timezone. A 90-minute grace window after the intended send time
   doubles as catch-up if a cron event is missed.
-- **Timeframe**: a rolling window (1/3/5/7/14/30 days), **any of the last 12
-  calendar months** (with its real 28–31 day count and a proper period label
-  like "August 2026"), or **an exact custom range** — start/end dates up to
-  366 days apart plus optional HH:MM times (e.g. "Sep 1 09:00 → Sep 3
-  17:30"), interpreted in the schedule's timezone. Every adaptive-dataset
+- **Timeframe**: a rolling window (1/3/5/7/14/30 days), **the last complete
+  period** (Daily = yesterday 00:00:00–23:59:59 local, Weekly = previous
+  Monday–Sunday, Monthly = previous calendar month — computed at send time
+  so it never goes stale), **any of the last 12 calendar months** (with its
+  real 28–31 day count and a proper period label like "August 2026"), or
+  **an exact custom range** — start/end dates up to 366 days apart plus
+  optional HH:MM times (e.g. "Sep 1 09:00 → Sep 3 17:30"), interpreted in
+  the schedule's timezone. Every adaptive-dataset
   section follows the exact window (local days + intra-day bounds); only
   the daily-overview and error charts (1dGroups, whole days by dataset
   design) don't — they switch to exact hourly buckets for ≤1-day windows.
@@ -653,11 +657,16 @@ All routes are `POST` unless noted. Rate-limited routes are marked ⏱
 | `POST /api/zt-summary` ⏱ | AI executive summary for a Zero Trust report |
 
 Report requests accept `{ token, accountId | zoneId, days?, rangeMode?, tzOffset?,
-monthsAgo?, sinceDate?, untilDate?, sinceTime?, untilTime?, isPoc? }` where
-`rangeMode` is `"rolling"` (default), `"calendar_month"` (+ optional `monthsAgo`
-1–12), or `"custom"` (+ `sinceDate`/`untilDate`, local YYYY-MM-DD, inclusive,
-span 1–366 days; + optional `sinceTime`/`untilTime`, HH:MM local, defaults
-00:00 / 23:59 with the end minute inclusive).
+monthsAgo?, period?, sinceDate?, untilDate?, sinceTime?, untilTime?, isPoc? }`
+where `rangeMode` is `"rolling"` (default), `"calendar_month"` (+ optional
+`monthsAgo` 1–12), `"custom"` (+ `sinceDate`/`untilDate`, local YYYY-MM-DD,
+inclusive, span 1–366 days; + optional `sinceTime`/`untilTime`, HH:MM local,
+defaults 00:00 / 23:59 with the end minute inclusive), or `"period"` (+
+`period`: `"yesterday"` / `"last_week"` / `"last_month"` — the most recent
+COMPLETE period in `tzOffset`'s timezone, computed at run time: a daily
+schedule reports exactly yesterday 00:00:00–23:59:59 local, weekly reports
+the previous Monday–Sunday, monthly the previous calendar month with its
+real 28–31 days).
 
 Every section aligns with that window to the extent its dataset allows:
 request-level breakdowns (TLS key-exchange/PQC, WAF rules/series, bots, AI

@@ -11,7 +11,7 @@ import {
   Shield, Globe, Clock, Plus, Pencil, Trash2, History, Send, Loader2,
   AlertCircle, CheckCircle, X, Mail, Calendar, User, ArrowLeft, KeyRound, Settings,
 } from "lucide-react";
-import type { ScheduleConfig, ScheduleInput, ScheduleHistoryEntry, ZoneOption, ScheduleReportType, ScheduleFrequency, ReportRangeMode } from "../types";
+import type { ScheduleConfig, ScheduleInput, ScheduleHistoryEntry, ZoneOption, ScheduleReportType, ScheduleFrequency, ReportRangeMode, ReportPeriod } from "../types";
 import {
   listSchedules, createSchedule, updateSchedule, deleteSchedule,
   sendScheduleNow, fetchScheduleHistory, fetchScheduleZones,
@@ -70,6 +70,10 @@ function describeRange(s: ScheduleConfig): string {
       : "";
     return `custom ${s.sinceDate ?? "?"} → ${s.untilDate ?? "?"}${times}`;
   }
+  if (s.rangeMode === "period")
+    return s.period === "yesterday" ? "yesterday (full day)"
+      : s.period === "last_week" ? "last full week (Mon–Sun)"
+      : "last calendar month";
   if (s.rangeMode === "calendar_month") {
     const back = s.monthsAgo ?? 1;
     if (back === 1) return "last calendar month";
@@ -552,6 +556,7 @@ function configToInput(s: ScheduleConfig, enabledOverride?: boolean): ScheduleIn
     sinceTime: s.sinceTime ?? null,
     untilTime: s.untilTime ?? null,
     monthsAgo: s.monthsAgo ?? null,
+    period: s.period as ReportPeriod | null,
     frequency: s.frequency,
     dayOfWeek: s.dayOfWeek,
     dayOfMonth: s.dayOfMonth,
@@ -584,6 +589,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
   const [days, setDays] = useState<number>(initial?.days ?? 30);
   const [rangeMode, setRangeMode] = useState<ReportRangeMode>(initial?.rangeMode ?? "rolling");
   const [monthsAgo, setMonthsAgo] = useState<number>(initial?.monthsAgo ?? 1);
+  const [period, setPeriod] = useState<ReportPeriod>((initial?.period as ReportPeriod) ?? "yesterday");
   const [sinceDate, setSinceDate] = useState<string>(initial?.sinceDate ?? "");
   const [untilDate, setUntilDate] = useState<string>(initial?.untilDate ?? "");
   const [sinceTime, setSinceTime] = useState<string>(initial?.sinceTime ?? "");
@@ -684,6 +690,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       sinceTime: rangeMode === "custom" && sinceTime ? sinceTime : null,
       untilTime: rangeMode === "custom" && untilTime ? untilTime : null,
       monthsAgo: rangeMode === "calendar_month" ? monthsAgo : null,
+      period: rangeMode === "period" ? period : null,
       frequency,
       dayOfWeek: frequency === "weekly" ? dayOfWeek : null,
       dayOfMonth: frequency === "monthly" ? dayOfMonth : null,
@@ -922,6 +929,19 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
               }}>
               Month
             </button>
+            <button type="button" onClick={() => setRangeMode("period")}
+              style={{
+                flex: 1, padding: "13px 6px 11px",
+                fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                textTransform: "uppercase" as const, cursor: "pointer",
+                border: "1px solid",
+                borderColor: rangeMode === "period" ? "#ba0816" : "#c4c4c4",
+                backgroundColor: rangeMode === "period" ? "#ba0816" : "transparent",
+                color: rangeMode === "period" ? "#ffffff" : "#5d5e65",
+                transition: "all 0.15s", textAlign: "center" as const,
+              }}>
+              Period
+            </button>
             <button type="button" onClick={() => setRangeMode("custom")}
               style={{
                 flex: 1, padding: "13px 6px 11px",
@@ -936,6 +956,37 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
               Custom
             </button>
           </div>
+          {rangeMode === "period" && (
+            <>
+            <div style={{ marginTop: 8, display: "flex", gap: 0 }}>
+              {([
+                { value: "yesterday", label: "Daily — yesterday" },
+                { value: "last_week", label: "Weekly — last Mon–Sun" },
+                { value: "last_month", label: "Monthly — last month" },
+              ] as const).map((opt) => (
+                <button key={opt.value} type="button" onClick={() => setPeriod(opt.value)}
+                  style={{
+                    flex: 1, padding: "10px 6px 8px",
+                    fontSize: 10, fontWeight: 400, letterSpacing: "0.05em",
+                    textTransform: "uppercase" as const, cursor: "pointer",
+                    border: "1px solid",
+                    borderColor: period === opt.value ? "#ba0816" : "#c4c4c4",
+                    backgroundColor: period === opt.value ? "#ba0816" : "transparent",
+                    color: period === opt.value ? "#ffffff" : "#5d5e65",
+                    marginRight: -1, transition: "all 0.15s", textAlign: "center" as const,
+                  }}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p style={{ marginTop: 8, fontSize: 11, color: "#5d5e65", lineHeight: 1.5 }}>
+              Reports the last COMPLETE period in the schedule's timezone ({tzLabel(tzOffset)}) — Daily covers
+              yesterday 00:00:00–23:59:59, Weekly the previous Monday–Sunday, Monthly the previous calendar month
+              (real 28–31 days). The window is computed at send time, so "yesterday" is always the day before the
+              report fires — pair a Daily period with an early-morning send hour for a true "yesterday report".
+            </p>
+            </>
+          )}
           {rangeMode === "calendar_month" && (
             <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
               <select

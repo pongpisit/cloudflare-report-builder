@@ -10,7 +10,7 @@ import type { Env, ReportRangeMode } from "../types";
 import { fetchAppSecConfig, fetchEmailSecurity, fetchDnsRecordsEnriched, getCustomWafRules, type CfCertPack, type CfRuleset, type CfRateLimit } from "../services/cf-rest";
 import {
   last30Days,
-  lastCalendarMonth,
+  lastCalendarMonth, lastPeriodRange,
   fetchHttpRequestsTimeSeries,
   fetchHttpRequestsHourly,
   fetchHttpErrorTimeSeries,
@@ -88,6 +88,7 @@ import {
   fetchAiCrawlerTopPaths,
   fetchAiReferralTraffic,
   customDateRange,
+  type ReportPeriod,
 } from "../services/cf-graphql";
 import {
   getApiShieldOperations,
@@ -117,11 +118,11 @@ import type { AppSecData, CertificateInfo, WafManagedRule, RateLimitRule } from 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30] as const;
 
 function validateInput(body: unknown):
-  | { token: string; zoneId: string; accountId: string; days: number; tzOffset: number; rangeMode: ReportRangeMode; sinceDate?: string; untilDate?: string; sinceTime?: string; untilTime?: string; monthsAgo?: number }
+  | { token: string; zoneId: string; accountId: string; days: number; tzOffset: number; rangeMode: ReportRangeMode; sinceDate?: string; untilDate?: string; sinceTime?: string; untilTime?: string; monthsAgo?: number; period?: ReportPeriod }
   | { error: string }
   | null {
   if (!body || typeof body !== "object") return null;
-  const { token, zoneId, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, sinceTime, untilTime, monthsAgo } = body as Record<string, unknown>;
+  const { token, zoneId, accountId, days, tzOffset, rangeMode, sinceDate, untilDate, sinceTime, untilTime, monthsAgo, period } = body as Record<string, unknown>;
   if (typeof token !== "string" || !token.trim()) return null;
   if (typeof zoneId !== "string" || !/^[a-f0-9]{32}$/.test(zoneId)) return null;
   if (typeof accountId !== "string" || !/^[a-f0-9]{32}$/.test(accountId)) return null;
@@ -135,6 +136,7 @@ function validateInput(body: unknown):
   const validRangeMode: ReportRangeMode =
     rangeMode === "calendar_month" ? "calendar_month" :
     rangeMode === "custom" ? "custom" :
+    rangeMode === "period" ? "period" :
     "rolling";
 
   if (validRangeMode === "custom") {
@@ -153,6 +155,12 @@ function validateInput(body: unknown):
     if (isNaN(parsedMonthsAgo) || parsedMonthsAgo < 1 || parsedMonthsAgo > 12)
       return { error: "monthsAgo must be an integer 1–12 when rangeMode is calendar_month." };
     return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "calendar_month", monthsAgo: parsedMonthsAgo };
+  }
+
+  if (validRangeMode === "period") {
+    if (period !== "yesterday" && period !== "last_week" && period !== "last_month")
+      return { error: 'rangeMode "period" requires period: "yesterday", "last_week" or "last_month".' };
+    return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "period", period };
   }
 
   return { token: token.trim(), zoneId, accountId, days: validDays, tzOffset: validTz, rangeMode: "rolling" };
@@ -268,6 +276,10 @@ export async function generateAppsecData(input: {
   /** rangeMode "calendar_month": which month — 1 = last month (default),
    *  2 = the month before that, etc. (1..12). */
   monthsAgo?: number;
+  /** rangeMode "period": the last COMPLETE period, computed at run time in
+   *  tzOffset's timezone — yesterday / last_week (Mon–Sun) / last_month.
+   *  `days` is ignored in this mode. */
+  period?: ReportPeriod;
   /** rangeMode "custom": first day, YYYY-MM-DD local. */
   sinceDate?: string;
   /** rangeMode "custom": last day, YYYY-MM-DD local (inclusive; may be today). */
@@ -289,6 +301,8 @@ export async function generateAppsecData(input: {
   type DatedRange = ReturnType<typeof last30Days>;
   const dateRange: DatedRange =
     rangeMode === "calendar_month" ? (lastCalendarMonth(tzOffset, input.monthsAgo ?? 1) as unknown as DatedRange)
+    : rangeMode === "period"
+      ? (lastPeriodRange(input.period ?? "yesterday", tzOffset) as unknown as DatedRange)
     : rangeMode === "custom"
       ? ((input.sinceDate && input.untilDate
           ? customDateRange(input.sinceDate, input.untilDate, tzOffset, input.sinceTime, input.untilTime)

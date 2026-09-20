@@ -7,7 +7,7 @@ import {
   Shield, Key, Building, AlertCircle, Eye, EyeOff,
   Loader2, Globe, ChevronDown, CheckCircle, Upload, User, Users, Calendar, Clock,
 } from "lucide-react";
-import type { ReportInput, ZoneOption, ReportRangeMode } from "../types";
+import type { ReportInput, ZoneOption, ReportRangeMode, ReportPeriod } from "../types";
 import { fetchZones } from "../services/api";
 
 interface Props {
@@ -73,6 +73,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
   const [days, setDays]                   = useState<number>(30);
   const [rangeMode, setRangeMode]         = useState<ReportRangeMode>("rolling");
   const [monthsAgo, setMonthsAgo]         = useState<number>(1);
+  const [period, setPeriod]               = useState<ReportPeriod>("yesterday");
   const [sinceDate, setSinceDate]         = useState<string>("");
   const [untilDate, setUntilDate]         = useState<string>("");
   const [sinceTime, setSinceTime]         = useState<string>("");
@@ -162,6 +163,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
       rangeMode,
       ...(rangeMode === "custom" ? { sinceDate, untilDate, ...(sinceTime ? { sinceTime } : {}), ...(untilTime ? { untilTime } : {}) } : {}),
       ...(rangeMode === "calendar_month" ? { monthsAgo } : {}),
+      ...(rangeMode === "period" ? { period } : {}),
       product,
       clientName:  clientName.trim()  || undefined,
       partnerName: partnerName.trim() || undefined,
@@ -445,6 +447,20 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                       }}>
                       Month
                     </button>
+                    <button type="button" onClick={() => setRangeMode("period")}
+                      style={{
+                        flex: 1, padding: "13px 8px 11px",
+                        fontSize: 11, fontWeight: 400, letterSpacing: "0.09375rem",
+                        textTransform: "uppercase" as const, cursor: "pointer",
+                        border: "1px solid",
+                        borderColor: rangeMode === "period" ? "#ba0816" : "#c4c4c4",
+                        backgroundColor: rangeMode === "period" ? "#ba0816" : "transparent",
+                        color: rangeMode === "period" ? "#ffffff" : "#5d5e65",
+                        transition: "all 0.15s",
+                        textAlign: "center" as const,
+                      }}>
+                      Period
+                    </button>
                     <button type="button" onClick={() => setRangeMode("custom")}
                       style={{
                         flex: 1, padding: "13px 8px 11px",
@@ -460,6 +476,34 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                       Custom
                     </button>
                   </div>
+                  {rangeMode === "period" && (
+                    <div style={{ marginTop: 8, display: "flex", gap: 0 }}>
+                      {([
+                        { value: "yesterday", label: "Daily — yesterday" },
+                        { value: "last_week", label: "Weekly — last Mon–Sun" },
+                        { value: "last_month", label: "Monthly — last month" },
+                      ] as const).map((opt) => (
+                        <button key={opt.value} type="button" onClick={() => setPeriod(opt.value)}
+                          style={{
+                            flex: 1, padding: "10px 8px 8px",
+                            fontSize: 10, fontWeight: 400, letterSpacing: "0.05em",
+                            textTransform: "uppercase" as const, cursor: "pointer",
+                            border: "1px solid",
+                            borderColor: period === opt.value ? "#ba0816" : "#c4c4c4",
+                            backgroundColor: period === opt.value ? "#ba0816" : "transparent",
+                            color: period === opt.value ? "#ffffff" : "#5d5e65",
+                            marginRight: -1, transition: "all 0.15s", textAlign: "center" as const,
+                          }}>
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {rangeMode === "period" && (
+                    <p style={{ marginTop: 8, fontSize: 11, color: "#5d5e65", lineHeight: 1.5 }}>
+                      Reports the last COMPLETE period in your timezone — Daily covers yesterday 00:00:00–23:59:59, Weekly the previous Monday–Sunday, Monthly the previous calendar month (real 28–31 days). The window is computed when the report runs, so it never goes stale.
+                    </p>
+                  )}
                   {rangeMode === "calendar_month" && (
                     <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
                       <select

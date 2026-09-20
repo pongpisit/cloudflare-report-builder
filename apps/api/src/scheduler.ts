@@ -29,6 +29,7 @@ import {
 } from "./services/email-template";
 import { sendReportEmail } from "./services/send-report-email";
 import { getEffectiveBackendConfig } from "./services/settings";
+import type { ReportPeriod } from "./services/cf-graphql";
 
 export interface ScheduleRunResult {
   ok: boolean;
@@ -213,6 +214,7 @@ export async function runSchedule(
         sinceTime: row.since_time ?? undefined,
         untilTime: row.until_time ?? undefined,
         monthsAgo: row.months_ago ?? undefined,
+        period: (row.period ?? undefined) as ReportPeriod | undefined,
       });
       const aiSummary = await generateAiSummary(env, appsec, isPoc).catch((e) => {
         console.warn("[scheduler] AI summary failed, sending without it:", String(e));
@@ -236,6 +238,7 @@ export async function runSchedule(
         sinceTime: row.since_time ?? undefined,
         untilTime: row.until_time ?? undefined,
         monthsAgo: row.months_ago ?? undefined,
+        period: (row.period ?? undefined) as ReportPeriod | undefined,
         db: env.DB,
       });
       const aiSummary = await generateZtSummary(env, zt, isPoc).catch((e) => {

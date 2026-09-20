@@ -751,7 +751,11 @@ export type ScheduleReportType = "appsec" | "zero-trust";
 // "calendar_month" = the previous full calendar month (28-31 days,
 // whichever the month actually has) — fixes monthly-frequency schedules
 // silently drifting off true month boundaries when using days=30.
-export type ReportRangeMode = "rolling" | "calendar_month" | "custom";
+export type ReportRangeMode = "rolling" | "calendar_month" | "custom" | "period";
+
+/** Period mode: the last COMPLETE period, computed at run time in the
+ *  schedule's timezone — yesterday / previous Mon–Sun week / previous month. */
+export type ReportPeriod = "yesterday" | "last_week" | "last_month";
 
 export interface ScheduleConfig {
   id: string;
@@ -782,6 +786,8 @@ export interface ScheduleConfig {
   sinceTime: string | null;
   untilTime: string | null;
   monthsAgo: number | null;
+  /** Period mode choice (null in other modes). */
+  period: string | null;
   /** True when this schedule carries its own API token (value never returned). */
   apiTokenSet: boolean;
   /** Masked hint ("••••••••xxxx") when a per-schedule token is stored. */
@@ -804,6 +810,8 @@ export interface ScheduleInput {
   sinceTime?: string | null;
   untilTime?: string | null;
   monthsAgo?: number | null;
+  /** rangeMode "period": yesterday | last_week | last_month. */
+  period?: ReportPeriod | null;
   frequency: ScheduleFrequency;
   dayOfWeek: number | null;
   dayOfMonth: number | null;
