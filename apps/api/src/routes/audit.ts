@@ -98,7 +98,11 @@ export async function handleAuditGet(c: Context<{ Bindings: Env }>) {
   const bucket = c.env.AUDIT_BUCKET;
   if (!bucket) return c.json({ error: "Audit storage not configured" }, 500);
 
-  const key = c.req.param("key");
+  // Scheduled snapshots live under nested keys ("scheduled/<id>/<ts>-full.html"),
+  // so read the raw path tail rather than a single :key segment (Hono params
+  // don't match "/") and decode it.
+  const prefix = "/api/audit/";
+  const key = decodeURIComponent(c.req.path.slice(prefix.length));
   if (!key) return c.json({ error: "Missing key" }, 400);
 
   const obj = await bucket.get(key);

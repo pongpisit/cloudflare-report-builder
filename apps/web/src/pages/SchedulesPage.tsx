@@ -875,7 +875,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
                 <p style={{ fontSize: 12, color: "#7f1d1d", marginBottom: 8 }}>{zonesError}</p>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <p style={{ fontSize: 11, color: "#5d5e65", display: "flex", alignItems: "center", gap: 6 }}>
-                    <KeyRound size={11} /> Set CF_API_TOKEN (secret) and CF_ACCOUNT_ID (var) on the Worker, then retry.
+                    <KeyRound size={11} /> Backend credentials aren't configured or valid — set them in Scheduled Reports → Settings (the gear above), or, for a customer schedule, paste their API token in the Customer Credentials block and click “Load their zones”.
                   </p>
                   <button type="button" onClick={onRetryZones} className="ar-btn-ghost" style={{ padding: "7px 12px 5px", fontSize: 10 }}>
                     <Loader2 size={10} /> Retry

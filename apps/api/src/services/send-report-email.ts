@@ -22,6 +22,16 @@ export interface SendReportEmailParams {
   text: string;
   /** Sender address override (from Settings) — defaults to env.EMAIL_FROM */
   from?: string;
+  /**
+   * File attachments — e.g. the full-report HTML document (the complete
+   * report rendered for the browser, attached alongside the email-safe
+   * digest body). Disposition "attachment" (not inline).
+   */
+  attachments?: {
+    filename: string;
+    type: string;
+    content: string;
+  }[];
 }
 
 export interface SendReportEmailResult {
@@ -67,6 +77,16 @@ export async function sendReportEmail(
         subject: p.subject,
         html: p.html,
         text: p.text,
+        ...(p.attachments?.length
+          ? {
+              attachments: p.attachments.map((a) => ({
+                disposition: "attachment" as const,
+                filename: a.filename,
+                type: a.type,
+                content: a.content,
+              })),
+            }
+          : {}),
       });
       return { ok: true, messageId: response.messageId };
     } catch (e) {

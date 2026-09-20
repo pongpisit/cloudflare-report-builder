@@ -603,8 +603,15 @@ recipients, subject, and an optional custom message.
 - **"Send test now"**: generates and sends immediately, recorded as a
   `manual` run in history — use this to verify recipients/formatting before
   trusting the cron.
-- **Archive**: every scheduled send's rendered HTML is snapshotted to the
-  R2 audit bucket under `scheduled/`.
+- **Full report attached**: every scheduled email carries the complete report
+  as a standalone `.html` attachment — the same generated data the on-demand
+  dashboard renders, as a browser-openable document (KPI grid, pure-CSS daily
+  charts, ranked tables for every section, honest empty states where data is
+  unavailable). The email body stays the compact email-safe digest, since
+  email clients strip `<style>` and JS.
+- **Archive**: every scheduled send's full report AND digest are snapshotted
+  to the R2 audit bucket under `scheduled/` (the full report as the primary
+  artifact, `-full` suffix).
 - See `apps/api/src/scheduler.ts` for the full implementation.
 
 ---

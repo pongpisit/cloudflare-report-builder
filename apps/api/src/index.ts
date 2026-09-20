@@ -163,7 +163,7 @@ app.post("/api/summary", (c, next) => applyRateLimit(c, next), handleAiSummary);
 // Audit routes — R2 storage
 app.post("/api/audit",      handleAuditSave);
 app.get ("/api/audit",      handleAuditList);
-app.get ("/api/audit/:key", handleAuditGet);
+app.get ("/api/audit/*",   handleAuditGet);   // wildcard — nested scheduled/<id>/<ts>.html keys work too
 
 // Cloudflare One (Zero Trust) routes
 app.post("/api/zerotrust",  (c, next) => applyRateLimit(c, next), handleFetchZeroTrust);

@@ -6,9 +6,11 @@
  * now, claims each one atomically (double-send guard), then for each: generates
  * the report with that schedule's own credentials when set (multi-customer)
  * and the backend-bound CF_API_TOKEN otherwise, produces the Workers AI
- * executive summary, renders an email-safe HTML digest, sends it via the EMAIL
- * binding (Cloudflare Email Sending), snapshots the HTML to R2, and records
- * the run in send_history.
+ * executive summary, renders an email-safe HTML digest AND a full-report HTML
+ * document (the complete report, same data as the on-demand view), sends the
+ * digest as the email body with the full report attached via the EMAIL binding
+ * (Cloudflare Email Sending), snapshots both to R2, and records the run in
+ * send_history.
  *
  * The grace window also acts as catch-up: if a cron event is delayed or
  * missed entirely, the next hourly fire still triggers the run (up to 90
@@ -27,6 +29,11 @@ import {
   type ReportEmailParams,
   type RenderedEmail,
 } from "./services/email-template";
+import {
+  renderAppsecFullReport,
+  renderZtFullReport,
+  type FullReportParams,
+} from "./services/full-report-html";
 import { sendReportEmail } from "./services/send-report-email";
 import { getEffectiveBackendConfig } from "./services/settings";
 import type { ReportPeriod } from "./services/cf-graphql";
@@ -199,10 +206,15 @@ export async function runSchedule(
 
     let rendered: RenderedEmail;
     let subject: string;
+    // Generated report data + AI summary — needed again after the branch for
+    // the full-report attachment, so hoisted here.
+    let appsec: Awaited<ReturnType<typeof generateAppsecData>> | undefined;
+    let zt: Awaited<ReturnType<typeof generateZerotrustData>> | undefined;
+    let aiSummary = "";
 
     if (row.report_type === "appsec") {
       if (!row.zone_id) throw new Error("AppSec schedule has no zone configured");
-      const appsec = await generateAppsecData({
+      appsec = await generateAppsecData({
         token,
         zoneId: row.zone_id,
         accountId,
@@ -216,7 +228,7 @@ export async function runSchedule(
         monthsAgo: row.months_ago ?? undefined,
         period: (row.period ?? undefined) as ReportPeriod | undefined,
       });
-      const aiSummary = await generateAiSummary(env, appsec, isPoc).catch((e) => {
+      aiSummary = await generateAiSummary(env, appsec, isPoc).catch((e) => {
         console.warn("[scheduler] AI summary failed, sending without it:", String(e));
         return "";
       });
@@ -230,7 +242,7 @@ export async function runSchedule(
       rendered = renderAppsecEmail(appsec, params);
       subject = applySubjectTokens(row.subject, { zone: appsec.meta?.zoneName });
     } else {
-      const zt = await generateZerotrustData({
+      zt = await generateZerotrustData({
         token, accountId, days: row.days, tzOffset,
         rangeMode: row.range_mode ?? "rolling",
         sinceDate: row.since_date ?? undefined,
@@ -241,7 +253,7 @@ export async function runSchedule(
         period: (row.period ?? undefined) as ReportPeriod | undefined,
         db: env.DB,
       });
-      const aiSummary = await generateZtSummary(env, zt, isPoc).catch((e) => {
+      aiSummary = await generateZtSummary(env, zt, isPoc).catch((e) => {
         console.warn("[scheduler] AI summary failed, sending without it:", String(e));
         return "";
       });
@@ -256,18 +268,45 @@ export async function runSchedule(
       subject = applySubjectTokens(row.subject, { account: zt.meta?.accountName });
     }
 
+    // Full report attachment — the same generated data as the on-demand
+    // dashboard, rendered as a standalone browser HTML document. The email
+    // body stays the compact email-safe digest (email clients strip <style>
+    // and JS); the attachment carries the complete report.
+    const fullParams: FullReportParams = {
+      scheduleName: row.name,
+      message: row.message ?? "",
+      isPoc,
+      clientName: row.client_name,
+      aiSummary,
+    };
+    const fullHtml = appsec
+      ? renderAppsecFullReport(appsec, fullParams)
+      : renderZtFullReport(zt as Awaited<ReturnType<typeof generateZerotrustData>>, fullParams);
+    const attachmentDate = (appsec ? appsec.meta?.until : zt?.meta?.until)
+      ?? new Date().toISOString().slice(0, 10);
+
     const sendResult = await sendReportEmail(env, {
       to: recipients,
       subject,
       html: rendered.html,
       text: rendered.text,
       from: emailFrom,
+      attachments: [{
+        filename: `${row.report_type}-report-${attachmentDate}.html`,
+        type: "text/html",
+        content: fullHtml,
+      }],
     });
     ok = sendResult.ok;
     error = sendResult.error;
     messageId = sendResult.messageId;
 
-    // Archive what was generated (even if the send failed — useful for debugging)
+    // Archive what was generated (even if the send failed — useful for
+    // debugging). The FULL report is the primary archive artifact; the
+    // digest is kept alongside for a quick glance.
+    await saveSnapshot(env, row, fullHtml, "-full").catch((e) => {
+      console.warn("[scheduler] full-report snapshot save failed:", String(e));
+    });
     await saveSnapshot(env, row, rendered.html).catch((e) => {
       console.warn("[scheduler] snapshot save failed:", String(e));
     });
@@ -321,9 +360,9 @@ function safeParseRecipients(json: string): string[] {
   }
 }
 
-async function saveSnapshot(env: Env, row: ScheduleRow, html: string): Promise<void> {
+async function saveSnapshot(env: Env, row: ScheduleRow, html: string, suffix = ""): Promise<void> {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const key = `scheduled/${row.id}/${ts}.html`;
+  const key = `scheduled/${row.id}/${ts}${suffix}.html`;
   await env.AUDIT_BUCKET.put(key, html, {
     httpMetadata: { contentType: "text/html; charset=utf-8" },
     customMetadata: {
