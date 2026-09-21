@@ -20,6 +20,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: {
+    // Inline imported assets (the Cloudflare logo, 11.4 KB) as data URIs —
+    // this bundle ends up inside email attachments with no server behind it.
+    assetsInlineLimit: 20_000,
     outDir: "dist/static-report",
     emptyOutDir: true,
     rollupOptions: {

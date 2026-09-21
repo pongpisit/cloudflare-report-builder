@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { ReportInput, ZoneOption, ReportRangeMode, ReportPeriod } from "../types";
 import { fetchZones } from "../services/api";
+import cfLogo from "../assets/cf-logo";
 
 interface Props {
   onSubmit: (input: ReportInput) => void;
@@ -182,7 +183,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
         style={{ backgroundColor: "#1c1f2a", borderBottom: "3px solid #ba0816" }}>
         <div className="flex items-center gap-4 flex-1">
           {/* Cloudflare shield — sole brand identifier */}
-          <img src="/cf.png" alt="Cloudflare"
+          <img src={cfLogo} alt="Cloudflare"
             style={{ height: 28, objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.9 }} />
           {/* Thin red separator */}
           <div className="h-5 w-px" style={{ backgroundColor: "#ba0816" }} />

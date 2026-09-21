@@ -5,6 +5,7 @@
 import { useState, useEffect } from "react";
 import { ArrowLeft, FileText, ExternalLink, Search, RefreshCw, Loader2, Shield, Globe } from "lucide-react";
 import { fetchAuditList, type AuditReportMeta } from "../services/api";
+import cfLogo from "../assets/cf-logo";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
@@ -84,7 +85,7 @@ export default function AuditPage({ onBack, userEmail }: Props) {
             <ArrowLeft size={14} /> Back
           </button>
           <div className="flex-1 flex items-center gap-2">
-            <img src="/cf.png" alt="Cloudflare" className="h-5 object-contain" />
+            <img src={cfLogo} alt="Cloudflare" className="h-5 object-contain" />
             <span className="text-sm font-semibold text-cf-navy">Report Audit</span>
             <span className="text-xs text-cf-gray-400">— Saved Reports</span>
           </div>

@@ -37,6 +37,7 @@ import ApiShieldSection from "./sections/ApiShieldSection";
 import SuspiciousActivitySection from "./sections/SuspiciousActivitySection";
 import AiSecuritySection from "./sections/AiSecuritySection";
 import RulesSection from "./sections/RulesSection";
+import cfLogo from "../assets/cf-logo";
 
 interface Props {
   data: AppSecData;
@@ -126,7 +127,7 @@ export default function ReportPage({ data, input, onReset, userEmail }: Props) {
       <div className="print:hidden sticky top-0 z-50 bg-white border-b border-cf-gray-200 shadow-sm">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
           <div className="flex items-center gap-2 text-cf-navy font-semibold text-sm flex-1">
-            <img src="/cf.png" alt="Cloudflare" className="h-5 object-contain" />
+            <img src={cfLogo} alt="Cloudflare" className="h-5 object-contain" />
             {periodLabel} {reportNoun} · {data.meta.zoneName}
           </div>
           {/* Cloudflare Access authenticated user */}
@@ -206,7 +207,7 @@ export default function ReportPage({ data, input, onReset, userEmail }: Props) {
             {/* ── Top bar: CF logo left, Confidential right ─────────────── */}
             <div className="flex items-center justify-between">
               {/* Cloudflare logo */}
-              <img src="/cf.png" alt="Cloudflare" className="h-10 object-contain" />
+              <img src={cfLogo} alt="Cloudflare" className="h-10 object-contain" />
               <span className="text-cf-gray-400 text-[10px] font-semibold uppercase tracking-widest">
                 Confidential
               </span>

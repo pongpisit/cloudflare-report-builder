@@ -620,7 +620,10 @@ recipients, subject, and an optional custom message.
   `static-report/app.js|css` names, `</script>` sequences defused, JSON
   `<` escaped); falls back to a server-rendered full-report HTML when the
   static bundle isn't deployed. The email body stays the compact email-safe
-  digest, since email clients strip `<style>` and JS.
+  digest, since email clients strip `<style>` and JS. Assets are self-contained
+  too — imported images like the Cloudflare logo are inlined as data URIs
+  (assetsInlineLimit), so the attachment renders identically offline with no
+  external URLs.
 - **Archive**: every scheduled send's embedded on-demand report AND digest are snapshotted
   to the R2 audit bucket under `scheduled/` (the full report as the primary
   artifact, `-full` suffix).

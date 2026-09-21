@@ -12,6 +12,9 @@ export default defineConfig({
     },
   },
   build: {
+    // Inline imported assets (the Cloudflare logo, 11.4 KB) as data URIs so
+    // they render inside scheduled-email attachments, not just on-demand.
+    assetsInlineLimit: 20_000,
     rollupOptions: {
       output: {
         manualChunks: {

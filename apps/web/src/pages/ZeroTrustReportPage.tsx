@@ -41,6 +41,7 @@ import ZTOpportunitySection      from "./zt-sections/ZTOpportunitySection";
 import ZTRecommendationsSection    from "./zt-sections/ZTRecommendationsSection";
 import ZTOperationalAlertsSection  from "./zt-sections/ZTOperationalAlertsSection";
 import CoverGraphic              from "../components/CoverGraphic";
+import cfLogo from "../assets/cf-logo";
 
 // AI summary for ZT
 async function fetchZTSummary(zt: ZeroTrustData, isPoc = true): Promise<string> {
@@ -132,7 +133,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
         <div className="max-w-5xl mx-auto px-6 h-full flex items-center gap-4">
           {/* Brand */}
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <img src="/cf.png" alt="Cloudflare"
+            <img src={cfLogo} alt="Cloudflare"
               style={{ height: 22, objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.85 }}/>
             <div style={{ width: 1, height: 16, backgroundColor: "#ba0816" }} />
             <span style={{
@@ -215,7 +216,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
           <div className="h-2 w-full print:h-3 relative z-10" style={{ backgroundColor: "#ba0816" }} />
           <div className="relative z-10 h-full flex flex-col justify-between print:print-cover-inner" style={{ padding: "2.5rem 3.5rem" }}>
             <div className="flex items-center justify-between">
-              <img src="/cf.png" alt="Cloudflare" className="h-10 object-contain" />
+              <img src={cfLogo} alt="Cloudflare" className="h-10 object-contain" />
               <div className="flex items-center gap-4">
                 <span className="text-white text-[10px] font-bold px-3 py-1 uppercase tracking-wide" style={{ backgroundColor: "#ba0816" }}>Cloudflare One</span>
                 <span className="text-cf-gray-400 text-[10px] font-semibold uppercase tracking-widest">Confidential</span>
@@ -490,7 +491,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
           display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <img src="/cf.png" alt="Cloudflare"
+            <img src={cfLogo} alt="Cloudflare"
               style={{ height: 18, objectFit: "contain", filter: "brightness(0) invert(1)", opacity: 0.4 }} />
             <span style={{ fontSize: 11, color: "rgba(244,244,244,0.3)", letterSpacing: "0.05em" }}>
               CLOUDFLARE ONE {reportNoun.toUpperCase()} REPORT · {generatedAt}
