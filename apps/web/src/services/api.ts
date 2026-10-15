@@ -13,6 +13,21 @@ import type {
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 import { noteAccessRedirect, clearAccessReauthFlag } from "./access-reauth";
+import type { MagicTransitData } from "../../../../shared/magic-transit";
+
+export async function fetchMagicTransitData(input: ReportInput): Promise<MagicTransitData> {
+  const result = await post<{ ok: boolean; magicTransit: MagicTransitData }>("/api/magic-transit", {
+    token: input.token, accountId: input.accountId, days: input.days, tzOffset: input.tzOffset,
+    rangeMode: input.rangeMode, period: input.period, monthsAgo: input.monthsAgo,
+    sinceDate: input.sinceDate, untilDate: input.untilDate, sinceTime: input.sinceTime, untilTime: input.untilTime,
+  });
+  return result.magicTransit;
+}
+
+export async function fetchMtSummary(magicTransit: MagicTransitData, isPoc: boolean): Promise<string> {
+  const result = await post<{ summary: string }>("/api/mt-summary", { magicTransit, isPoc });
+  return result.summary;
+}
 
 /**
  * Shared fetch for every API call in this file — and for any component-level

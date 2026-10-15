@@ -470,7 +470,8 @@ export interface ReportInput {
   // "calendar_month" mode: which month to report — 1 = last month (default),
   // 2 = the month before that, etc. (1..12).
   monthsAgo?: number;
-  product?: "appsec" | "zero-trust";  // defaults to "appsec"
+  period?: ReportPeriod;
+  product?: "appsec" | "zero-trust" | "magic-transit";  // defaults to "appsec"
   // Optional branding (not sent to API)
   clientName?: string;
   partnerName?: string;
@@ -746,7 +747,7 @@ export interface AlertTrackingItem {
 // ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly";
-export type ScheduleReportType = "appsec" | "zero-trust";
+export type ScheduleReportType = "appsec" | "zero-trust" | "magic-transit";
 // "rolling" = fixed N-day window ending now (existing behavior).
 // "calendar_month" = the previous full calendar month (28-31 days,
 // whichever the month actually has) — fixes monthly-frequency schedules

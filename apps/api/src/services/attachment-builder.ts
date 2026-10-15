@@ -26,7 +26,7 @@ import type { Env } from "../types";
 
 /** Shape consumed by the web app's embedded mode (App.tsx → EmbeddedReport). */
 export interface EmbeddedReportPayload {
-  kind: "appsec" | "zero-trust";
+  kind: "appsec" | "zero-trust" | "magic-transit";
   data: unknown;
   input: Record<string, unknown>;
   aiSummary?: string;
@@ -77,9 +77,6 @@ export async function buildEmbeddedReportAttachment(
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>${title.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string))}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
 <style>${cssSafe}</style>
 </head>
 <body>

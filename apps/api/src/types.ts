@@ -32,7 +32,7 @@ export interface Env {
 // ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly";
-export type ScheduleReportType = "appsec" | "zero-trust";
+export type ScheduleReportType = "appsec" | "zero-trust" | "magic-transit";
 // "rolling" = fixed N-day window ending now (existing behavior).
 // "calendar_month" = the previous full calendar month (28-31 days,
 // whichever the month actually has) — see lastCalendarMonth() in

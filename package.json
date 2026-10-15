@@ -15,7 +15,8 @@
     "typecheck": "npm run typecheck --workspace=apps/api && tsc -b apps/web/tsconfig.json",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:report": "playwright show-report"
+    "test:e2e:report": "playwright show-report",
+    "test:magic-transit": "playwright test --config playwright.magic-transit.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

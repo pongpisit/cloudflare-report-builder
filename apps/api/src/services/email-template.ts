@@ -8,6 +8,30 @@
  */
 
 import type { AppSecData, ZeroTrustData } from "../types";
+import type { MagicTransitData } from "../../../../shared/magic-transit";
+
+export function renderMtEmail(data: MagicTransitData, params: ReportEmailParams): RenderedEmail {
+  const s = data.summary;
+  const bytes = (bits: number | undefined) => bits === undefined ? "Unavailable" : fmtBytes(bits / 8);
+  return buildShell({
+    title: `${clientLabel(params)}Magic Transit Network Report`,
+    subtitle: `${data.meta.periodLabel} · ${data.meta.accountName}`,
+    metaRows: [{ k: "Account", v: data.meta.accountName }, { k: "Window (UTC)", v: `${data.meta.sinceTs} → ${data.meta.untilTs}` }, { k: "Report", v: params.scheduleName }],
+    params,
+    kpis: [
+      { label: "Ingress traffic", value: bytes(s.traffic?.bits) }, { label: "Dropped traffic", value: bytes(s.dropped?.bits) },
+      { label: "Attack events", value: s.attackCount === null ? "Unavailable" : fmtNum(s.attackCount) },
+      { label: "Peak bucket bandwidth", value: s.peakBps === null ? "Unavailable" : `${fmtNum(s.peakBps)} bps` },
+      { label: "Probe success", value: s.probeSuccessPct === null ? "Unavailable" : `${s.probeSuccessPct.toFixed(1)}%` },
+      { label: "Configured tunnels", value: fmtNum(data.tunnels.length) },
+    ],
+    lists: [{ title: "Dropped traffic by mitigation system", rows: data.mitigationSystems.map(r => ({ label: r.name, value: `${bytes(r.bits)} · ${fmtNum(r.packets)} packets` })) },
+      { title: "Top destination prefixes", rows: (data.rankings.prefixes ?? []).slice(0, 5).map(r => ({ label: r.name, value: bytes(r.bits) })) },
+      { title: "Data unavailable", rows: Object.keys(data.errors).map(key => ({ label: key, value: "See attached report" })) }],
+    summaryTextBlock: summaryParagraphs(params.aiSummary),
+    footerNote: "The attached HTML contains the full visual Magic Transit report. Traffic is estimated from sampled analytics; peak rates are bucket averages and probe success is not SLA uptime. Configuration is a current snapshot.",
+  });
+}
 
 // ─── Shared params ────────────────────────────────────────────────────────────
 

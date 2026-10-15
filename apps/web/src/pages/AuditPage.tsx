@@ -30,15 +30,16 @@ function formatDate(iso: string): string {
 }
 
 function productBadge(hostname: string) {
-  const isZT = hostname.startsWith("zerotrust-");
+  const isZT = hostname.startsWith("zerotrust-") || hostname === "scheduled-zero-trust";
+  const isMT = hostname.startsWith("magic-transit-") || hostname === "scheduled-magic-transit";
   return (
     <span
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-        isZT ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"
+        isMT ? "bg-cyan-100 text-cyan-700" : isZT ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"
       }`}
     >
       {isZT ? <Shield size={9} /> : <Globe size={9} />}
-      {isZT ? "Cloudflare One" : "App Security"}
+      {isMT ? "Magic Transit" : isZT ? "Cloudflare One" : "App Security"}
     </span>
   );
 }

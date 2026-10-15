@@ -30,6 +30,7 @@ export interface SankeyData {
 interface Props {
   data: SankeyData;
   height?: number;
+  unit?: string;
 }
 
 // d3-sankey augments nodes/links with layout data
@@ -49,7 +50,7 @@ const NODE_PADDING = 24;
 const MARGIN = { top: 16, right: 8, bottom: 16, left: 8 };
 const LABEL_PAD = 10;
 
-export default function SankeyFlowChart({ data, height = 380 }: Props) {
+export default function SankeyFlowChart({ data, height = 380, unit = "requests" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(700);
   const [hoveredNode, setHoveredNode] = useState<number | null>(null);
@@ -110,9 +111,9 @@ export default function SankeyFlowChart({ data, height = 380 }: Props) {
     setTooltip({
       x: e.nativeEvent.offsetX,
       y: e.nativeEvent.offsetY,
-      content: `${n.name}: ${formatNumber(n.value)} requests`,
+      content: `${n.name}: ${formatNumber(n.value)} ${unit}`,
     });
-  }, [nodes]);
+  }, [nodes, unit]);
 
   const handleLinkEnter = useCallback((idx: number, e: React.MouseEvent) => {
     setHoveredLink(idx);
@@ -121,9 +122,9 @@ export default function SankeyFlowChart({ data, height = 380 }: Props) {
     setTooltip({
       x: e.nativeEvent.offsetX,
       y: e.nativeEvent.offsetY,
-      content: `${l.source.name} → ${l.target.name}: ${formatNumber(l.value)} requests`,
+      content: `${l.source.name} → ${l.target.name}: ${formatNumber(l.value)} ${unit}`,
     });
-  }, [links]);
+  }, [links, unit]);
 
   const handleLeave = useCallback(() => {
     setHoveredNode(null);

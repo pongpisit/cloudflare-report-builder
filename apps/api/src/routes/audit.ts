@@ -73,7 +73,7 @@ export async function handleAuditList(c: Context<{ Bindings: Env }>) {
   const bucket = c.env.AUDIT_BUCKET;
   if (!bucket) return c.json({ error: "Audit storage not configured" }, 500);
 
-  const listed = await bucket.list({ limit: 500 });
+  const listed = await bucket.list({ limit: 500, include: ["customMetadata"] });
 
   const reports = listed.objects
     .map((obj) => ({

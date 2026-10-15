@@ -449,7 +449,7 @@ function ScheduleCard({ schedule: s, busy, onEdit, onDelete, onSendNow, onToggle
                 backgroundColor: s.reportType === "appsec" ? "#1c1f2a" : "#ba0816",
                 color: "#f4f4f4",
               }}>
-                {s.reportType === "appsec" ? "App Security" : "Cloudflare One"}
+                {s.reportType === "appsec" ? "App Security" : s.reportType === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
               </span>
               {!s.enabled && (
                 <span style={{ fontSize: 10, letterSpacing: "0.09375rem", textTransform: "uppercase", color: "#5d5e65", padding: "3px 0" }}>
@@ -770,7 +770,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
         <div>
           <label className="ar-input-label"><Shield size={10} style={{ display: "inline", marginRight: 4 }} /> Report Type</label>
           <div style={{ display: "flex", gap: 0 }}>
-            {(["appsec", "zero-trust"] as const).map((p) => (
+            {(["appsec", "zero-trust", "magic-transit"] as const).map((p) => (
               <button key={p} type="button" onClick={() => setReportType(p)}
                 style={{
                   padding: "14px 28px 12px", flex: 1,
@@ -782,13 +782,14 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
                   color: reportType === p ? "#ffffff" : "#5d5e65",
                   transition: "all 0.15s", marginRight: -1,
                 }}>
-                {p === "appsec" ? "App Security" : "Cloudflare One"}
+                {p === "appsec" ? "App Security" : p === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
               </button>
             ))}
           </div>
         </div>
 
         {/* Per-schedule customer credentials (multi-customer) */}
+        {reportType === "magic-transit" && <p className="text-xs text-cf-gray-500">Magic Transit uses account-scoped credentials with Account Analytics Read. Add Magic Transit Read for tunnel/route configuration and product-specific read permissions for policy sections. The full visual report is attached as HTML; dates use this schedule's timezone.</p>}
         <div style={{ backgroundColor: "#fafafa", border: "1px solid #e2e2e2", padding: 16, marginBottom: 16 }}>
           <div className="flex items-center gap-2 mb-1">
             <KeyRound size={11} style={{ color: "#5d5e65" }} />

@@ -1,8 +1,8 @@
 # Cloudflare Report Builder
 
 Generate polished, data-rich PDF/HTML reports straight from live Cloudflare
-analytics — either a **Security (AppSec) report** for a single zone, or a
-**Zero Trust / Cloudflare One report** for an account — complete with an
+analytics — an **AppSec report** for a single zone, or a
+**Zero Trust / Cloudflare One** or **Magic Transit report** for an account — complete with an
 AI-written executive summary, charts, and prioritized recommendations. Built
 entirely as a Cloudflare Worker + static frontend: no external servers, no
 database to manage beyond Cloudflare's own D1/R2.
@@ -63,7 +63,18 @@ generate:
   with real online/offline status, Tunnel health, DLP & CASB findings, and a
   Zero Trust posture score. Mirrors the layout of Cloudflare's own **Zero
   Trust → Insights → Dashboards** catalog.
-- An **AI executive summary** (Workers AI) for both report types, with
+- **Magic Transit report** (per account) — a locally bundled Three.js globe,
+  ingress traffic pulse and prior-period changes, geographic distributions,
+  protocol/port traffic fingerprints, overlapping L3/L4 attack events, tunnel
+  probe health and throughput, DDoS/firewall/advanced protection activity,
+  and current tunnel, route, prefix and rule inventories. HTML attachments
+  render offline; print/PDF uses an SVG globe fallback.
+  Tunnel sections consolidate one-day windows into hourly charts and longer
+  windows into daily summaries, with one summary row per tunnel and collapsed
+  evidence. Probe counts are summed and routing-state means are sample-weighted;
+  bandwidth uses returned bits divided by observed source-bucket duration.
+  Missing intervals stay unavailable, and ingress/egress stay separate.
+- An **AI executive summary** (Workers AI) for all three report types, with
   distinct wording for a "Proof-of-Concept" pitch vs. a neutral recurring
   "Assessment" report.
 - **Finding lifecycle tracking** (D1-backed) — remediation register, CASB
@@ -71,13 +82,16 @@ generate:
   and occurrence count across report runs, and auto-resolve when the
   underlying condition clears.
 - Optional **scheduled email delivery** (daily/weekly/monthly, or the exact
-  previous calendar month) of either report type via Cloudflare Email
+  previous calendar month) of any report type via Cloudflare Email
   Sending, with a full run history.
 - An **audit archive** of every generated report (R2), listable and
   re-viewable later.
 
 **No mock data, ever.** See
 [Data sources and honesty guarantees](#data-sources-and-honesty-guarantees).
+
+See the [visualization roadmap](VISUALIZATION_ROADMAP.md) for proposed Three.js
+and linked-chart enhancements across Magic Transit, AppSec and Cloudflare One.
 
 ---
 
@@ -494,6 +508,38 @@ without them (that section just shows an honest empty state).
 | Account · Notifications · Read | optional | Recent alert history |
 | Account · Account Settings · Read | ✅ | Account name |
 
+### Magic Transit report
+
+Select **Magic Transit**, provide an account-scoped token and account ID, and
+generate the report without fetching or choosing a zone.
+
+| Permission | Required | Unlocks |
+|---|---|---|
+| Account · Account Analytics · Read | ✅ | Network analytics, attack events and tunnel telemetry; product entitlement still applies |
+| Account · Magic Transit · Read | optional | GRE/IPsec/CNI tunnels, routes and prefix inventory |
+| Account · Account Rulesets · Read | optional | DDoS/Network Firewall entrypoint rules; phase-specific `Magic Firewall Read` or `L4 DDoS Managed Ruleset Read` permissions are also accepted |
+| Account · Account Settings · Read | optional | Account display name |
+
+Advanced TCP/DNS configuration requires access to the corresponding protection
+feature and its configuration endpoint. A denied or unavailable endpoint is
+listed under **Data quality & collection status**; it does not invalidate the
+other measurements. Permission references: [GraphQL authentication](https://developers.cloudflare.com/analytics/graphql-api/getting-started/authentication/api-token-auth/),
+[prefix inventory](https://developers.cloudflare.com/api/resources/addressing/subresources/prefixes/methods/list/),
+[entrypoint rulesets](https://developers.cloudflare.com/api/resources/rulesets/subresources/phases/methods/get/).
+
+The collector discovers available fields, retention and query-duration limits
+per dataset, splits large query windows and omits incomplete aggregates when
+row limits are reached. Each report is capped at 120 upstream requests and four
+concurrent requests. Rankings are limited to returned top categories; peaks
+are bucket averages. Attack volumes cover event lifetimes, not just the report
+period. Probe success is not SLA uptime, and configuration is a current snapshot.
+
+Scheduling uses the same report template, customer credentials, branding and
+timezone-aware complete periods as on-demand generation. Apply
+`migrations/0014_magic_transit_report.sql` before creating Magic Transit
+schedules; this extends the product constraint while retaining existing
+schedule fields and send history.
+
 ---
 
 ## Security
@@ -675,8 +721,10 @@ All routes are `POST` unless noted. Rate-limited routes are marked ⏱
 | `POST /api/zones` | List zones for a token (lightweight, not rate limited) |
 | `POST /api/appsec` ⏱ | Generate AppSec report data for a zone |
 | `POST /api/zerotrust` ⏱ | Generate Zero Trust report data for an account |
+| `POST /api/magic-transit` ⏱ | Generate Magic Transit report data for an account |
 | `POST /api/summary` ⏱ | AI executive summary for an AppSec report |
 | `POST /api/zt-summary` ⏱ | AI executive summary for a Zero Trust report |
+| `POST /api/mt-summary` ⏱ | AI executive summary for a Magic Transit report |
 
 Report requests accept `{ token, accountId | zoneId, days?, rangeMode?, tzOffset?,
 monthsAgo?, period?, sinceDate?, untilDate?, sinceTime?, untilTime?, isPoc? }`
@@ -850,6 +898,29 @@ npm run test:e2e:report # open the last HTML report
 
 Live/browser E2E tests need real credentials in `.env.test` (copy from
 `.env.test.example` — never committed).
+
+The isolated Magic Transit suite uses synthetic documentation addresses,
+mocked upstream services and an in-memory SQLite database. It never loads
+`.env.test` or sends email. Browser tests exercise the **built** attachment:
+
+```bash
+npm run build
+npx playwright install chromium
+npm run test:magic-transit
+# Or use an already-installed Chrome:
+PLAYWRIGHT_CHANNEL=chrome npm run test:magic-transit
+```
+
+The migration tests use Node's `node:sqlite` module (Node 22.13+). The suite
+covers range/overlap math, partial failures, query budgets, credential omission,
+schedule dispatch/CRUD, schema preservation, offline HTML, WebGL fallback,
+mobile overflow and print/PDF.
+
+`live.spec.ts` is skipped by default. To explicitly validate a live account,
+provide `MT_LIVE_API_TOKEN` and `MT_LIVE_ACCOUNT_ID` through your shell environment
+and run `npm run test:magic-transit -- live.spec.ts`. This read-only check reports
+aggregate availability and independently verifies probe-status counts; it
+does not persist credentials or report data, modify schedules, or send email.
 
 ---
 

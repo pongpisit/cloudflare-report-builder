@@ -30,6 +30,7 @@ interface Props {
   overlap?: number;        // number of color bands (2 or 3)
   title?: string;
   subtitle?: string;
+  dateFormat?: string;
 }
 
 const BANDS = 3;
@@ -40,6 +41,7 @@ export default function HorizonChart({
   overlap = BANDS,
   title,
   subtitle,
+  dateFormat = "MMM d",
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(600);
@@ -100,7 +102,7 @@ export default function HorizonChart({
                   <text key={i} x={x} y={12}
                     textAnchor={i === 0 ? "start" : i === allDates.length - 1 ? "end" : "middle"}
                     style={{ fontSize: 9, fill: "#A8A29E", fontFamily: "Inter, system-ui, sans-serif" }}>
-                    {format(parseISO(d), "MMM d")}
+                     {format(parseISO(d), dateFormat)}
                   </text>
                 );
               })}

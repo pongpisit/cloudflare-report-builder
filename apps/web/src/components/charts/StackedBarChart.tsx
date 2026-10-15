@@ -20,6 +20,7 @@ interface Props {
   subtitle?: string;
   height?: number;
   xKey?: string;
+  labelFormatter?: (value: string) => string;
 }
 
 function CustomTooltip({ active, payload, label }: {
@@ -50,11 +51,11 @@ function CustomTooltip({ active, payload, label }: {
 }
 
 export default function StackedBarChart({
-  data, series, title, subtitle, height = 240, xKey = "date",
+  data, series, title, subtitle, height = 240, xKey = "date", labelFormatter = shortDate,
 }: Props) {
   const chartData = data.map((d) => ({
     ...d,
-    _label: shortDate(String(d[xKey])),
+    _label: labelFormatter(String(d[xKey])),
   }));
 
   return (

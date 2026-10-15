@@ -61,8 +61,15 @@ const TIMEFRAME_OPTIONS = [
   { days: 30, label: "30 Days"},
 ];
 
+const MT_PERMISSIONS = [
+  { label: "Account · Account Analytics · Read", required: true, note: "Magic Transit traffic, DDoS and tunnel telemetry" },
+  { label: "Account · Magic Transit · Read", required: false, note: "Tunnel and route inventory; required for configuration sections" },
+  { label: "Account · Account Rulesets · Read", required: false, note: "DDoS and Network Firewall entrypoint rules; phase-specific read permissions are also accepted" },
+  { label: "Account · Account Settings · Read", required: false, note: "Account display name" },
+];
+
 export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSchedules }: Props) {
-  const [product, setProduct]             = useState<"appsec" | "zero-trust">("appsec");
+  const [product, setProduct]             = useState<"appsec" | "zero-trust" | "magic-transit">("appsec");
   const [token, setToken]                 = useState("");
   const [accountId, setAccountId]         = useState("");
   const [showToken, setShowToken]         = useState(false);
@@ -113,10 +120,10 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
   const customDatesOk = rangeMode !== "custom" || customDateError === "";
 
   const canFetchZones = tokenOk && accountOk && !fetchingZones;
-  const canSubmit = product === "zero-trust"
+  const canSubmit = product !== "appsec"
     ? tokenOk && accountOk && customDatesOk && !loading
     : tokenOk && accountOk && zoneOk && customDatesOk && !loading;
-  const showConfig    = product === "zero-trust" || (zones.length > 0 && selectedZoneId);
+  const showConfig    = product !== "appsec" || (zones.length > 0 && selectedZoneId);
 
   // Month options for the calendar-month selector: the 12 months before
   // the current one, labeled with the month the report would actually cover.
@@ -158,7 +165,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
     if (!canSubmit) return;
     onSubmit({
       token: token.trim(),
-      zoneId: product === "zero-trust" ? "" : selectedZoneId,
+      zoneId: product !== "appsec" ? "" : selectedZoneId,
       accountId: accountId.trim().toLowerCase(),
       days, tzOffset: new Date().getTimezoneOffset(),
       rangeMode,
@@ -173,7 +180,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
     });
   }
 
-  const perms = product === "zero-trust" ? ZT_PERMISSIONS : REQUIRED_PERMISSIONS;
+  const perms = product === "magic-transit" ? MT_PERMISSIONS : product === "zero-trust" ? ZT_PERMISSIONS : REQUIRED_PERMISSIONS;
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: "#1c1f2a" }}>
@@ -264,8 +271,8 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                 Select Report Type
               </span>
             </div>
-            <div className="flex gap-0">
-              {(["appsec", "zero-trust"] as const).map((p) => (
+            <div className="flex gap-0 flex-wrap">
+              {(["appsec", "zero-trust", "magic-transit"] as const).map((p) => (
                 <button key={p} onClick={() => { setProduct(p); setSelectedZoneId(""); setZones([]); }}
                   style={{
                     padding: "15px 32px 13px",
@@ -278,7 +285,7 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                     transition: "all 0.15s",
                     marginRight: -1,
                   }}>
-                  {p === "appsec" ? "App Security" : "Cloudflare One"}
+                  {p === "appsec" ? "App Security" : p === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
                 </button>
               ))}
             </div>
@@ -394,16 +401,16 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
               )}
 
               {/* ZT info */}
-              {product === "zero-trust" && (
+              {product !== "appsec" && (
                 <div className="p-4" style={{ backgroundColor: "#1c1f2a", border: "1px solid #ba0816", borderLeft: "4px solid #ba0816" }}>
                   <div className="flex items-start gap-3">
                     <Shield size={14} style={{ color: "#ba0816", flexShrink: 0, marginTop: 1 }} />
                     <div>
                       <p style={{ fontSize: 11, fontWeight: 600, color: "#f4f4f4", textTransform: "uppercase", letterSpacing: "0.09375rem", marginBottom: 4 }}>
-                        Cloudflare One — Account-Level Report
+                        {product === "magic-transit" ? "Magic Transit" : "Cloudflare One"} — Account-Level Report
                       </p>
                       <p style={{ fontSize: 12, color: "rgba(244,244,244,0.55)", lineHeight: 1.6 }}>
-                        Covers Access (identity), Gateway (DNS/HTTP/L4), WARP (device posture), Tunnels, and DLP. No zone selection needed.
+                        {product === "magic-transit" ? "Network traffic, L3/L4 DDoS, tunnel health, Network Firewall and advanced protection. Includes an interactive globe and an export-friendly report. Configuration APIs may need additional product-specific read permissions; unavailable sections are identified. No zone selection needed." : "Covers Access (identity), Gateway (DNS/HTTP/L4), WARP (device posture), Tunnels, and DLP. No zone selection needed."}
                       </p>
                     </div>
                   </div>

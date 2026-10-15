@@ -16,6 +16,37 @@
  */
 
 import type { AppSecData, ZeroTrustData } from "../types";
+import type { MagicTransitData } from "../../../../shared/magic-transit";
+import { consolidateMtTunnels } from "../../../../shared/magic-transit-tunnels";
+
+/** Reduced, script-free fallback only when the complete React bundle is unavailable. */
+export function renderMtFullReport(data: MagicTransitData, p: FullReportParams): string {
+  const bytes = (bits: number | null | undefined) => bits == null ? "Unavailable" : fmtBytes(bits / 8);
+  const grid = kpiGrid([
+    { label: "Ingress traffic", value: bytes(data.summary.traffic?.bits) },
+    { label: "Dropped traffic", value: bytes(data.summary.dropped?.bits) },
+    { label: "Attack events", value: data.summary.attackCount === null ? "Unavailable" : fmtNum(data.summary.attackCount) },
+  ]);
+  const tab = (headers: string[], rows: unknown[][]) => table(headers.map(h => ({ h })), rows.map(row => ({ cells: row.map(esc) })));
+  const sections = [section("summary", "Executive assessment", summaryBlock(p.aiSummary)), section("traffic", "Traffic overview", grid + barChart(data.traffic.map(t => ({ date: t.timestamp, value: t.bps })), "#078dad", v => `${fmtNum(v)} bps`), "Reduced fallback rendering: the full interactive bundle was unavailable. Peaks are bucket averages.")];
+  sections.push(section("outcomes", "Traffic outcomes", tab(["Outcome", "Packets", "Bytes"], data.outcomes.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)]))));
+  sections.push(section("mitigation", "Mitigation systems", tab(["System", "Packets", "Bytes"], data.mitigationSystems.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)]))));
+  for (const [key, ranks] of Object.entries(data.rankings)) sections.push(section(key, key, tab(["Category", "Packets", "Bytes"], ranks.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)]))));
+  sections.push(section("pairs", "Protocol-port measurements", tab(["Protocol", "Port", "Packets", "Bytes"], data.protocolPorts.map(r => [r.protocol, r.port, fmtNum(r.packets), bytes(r.bits)]))));
+  sections.push(section("attacks", "Overlapping attack events", tab(["Vector", "Start", "End", "Destination", "Lifetime dropped bytes"], data.attacks.map(a => [a.vector, a.start, a.end ?? "Ongoing", `${a.destination}:${a.port}`, bytes(a.droppedBits)]))));
+  sections.push(section("tunnels", "Tunnel inventory", tab(["Name", "Type", "Endpoint", "Checks", "BGP"], data.tunnels.map(t => [t.name, t.type, t.endpoint, t.healthChecksEnabled === null ? "Unknown" : t.healthChecksEnabled, t.bgpState ?? "Unavailable"]))));
+  const tunnels = consolidateMtTunnels(data);
+  const cadence = tunnels.interval === "hour" ? "Hourly" : "Daily";
+  sections.push(section("health", "Tunnel health summary", tab(["Tunnel", "OK", "Timeout", "Other", "Probe success", "Mean state"], tunnels.totals.map(t => { const total = t.ok + t.timeout + t.other; return [t.tunnel, t.ok, t.timeout, t.other, total ? `${(t.ok / total * 100).toFixed(1)}%` : "Unavailable", t.state ?? "Unavailable"]; })) + `<details><summary>${cadence} health evidence</summary>${tab(["UTC period start", "Tunnel", "OK", "Timeout", "Other", "Mean state"], tunnels.health.map(t => [t.timestamp, t.tunnel, t.ok, t.timeout, t.other, t.state ?? "Unavailable"]))}</details>`));
+  sections.push(section("tunnel-traffic", `${cadence} tunnel traffic`, tunnels.traffic.length ? `<details><summary>${cadence} throughput evidence</summary>${tab(["UTC period start", "Tunnel", "Direction", "Bytes", "Mean bps"], tunnels.traffic.map(t => [t.timestamp, t.tunnel, t.direction, bytes(t.bits), t.bps]))}</details>` : `<p>No tunnel throughput measurements returned. This is not measured zero traffic.</p>`));
+  for (const protection of data.protections) sections.push(section(protection.key, protection.name, tab(["Category", "Packets", "Bytes"], protection.breakdown.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)])) + tab(["Rule", "Mode"], protection.rules.map(r => [r.name, r.mode]))));
+  sections.push(section("rules", "Protection rules", tab(["Name", "Phase", "Action", "Enabled", "Expression"], data.rules.map(r => [r.name, r.phase, r.action, r.enabled, r.expression]))));
+  sections.push(section("rule-activity", "Firewall rule activity", tab(["Rule", "Packets", "Bytes"], data.ruleActivity.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)]))));
+  sections.push(section("routes", "Current routes", tab(["Prefix", "Next hop", "Priority"], data.routes.map(r => [r.prefix, r.nextHop, r.priority]))));
+  sections.push(section("prefixes", "Current prefixes", tab(["CIDR", "ASN", "Advertisement snapshot", "RPKI"], data.prefixes.map(r => [r.cidr, r.asn ?? "Unavailable", r.advertised ?? "Unavailable", r.rpki]))));
+  sections.push(section("quality", "Data quality", data.notes.map(n => `<p>${esc(n)}</p>`).join("") + tab(["Section", "Collection error"], Object.entries(data.errors))));
+  return document(`${clientLabelOf(p)}Magic Transit`, data.meta.periodLabel, [["Account", data.meta.accountName], ["UTC range", `${data.meta.sinceTs} → ${data.meta.untilTs}`], ["Current configuration at", data.meta.configurationAt]], p.message, sections.join("\n"));
+}
 
 export interface FullReportParams {
   scheduleName: string;

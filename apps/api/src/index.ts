@@ -26,6 +26,8 @@ import { handleListZones } from "./routes/list-zones";
 import { handleAuditSave, handleAuditList, handleAuditGet } from "./routes/audit";
 import { handleFetchZeroTrust } from "./routes/fetch-zerotrust";
 import { handleZTSummary } from "./routes/ai-zt-summary";
+import { handleFetchMagicTransit } from "./routes/fetch-magic-transit";
+import { handleMtSummary } from "./routes/ai-magic-transit-summary";
 import {
   handleListSchedules,
   handleCreateSchedule,
@@ -168,6 +170,8 @@ app.get ("/api/audit/*",   handleAuditGet);   // wildcard — nested scheduled/<
 // Cloudflare One (Zero Trust) routes
 app.post("/api/zerotrust",  (c, next) => applyRateLimit(c, next), handleFetchZeroTrust);
 app.post("/api/zt-summary", (c, next) => applyRateLimit(c, next), handleZTSummary);
+app.post("/api/magic-transit", (c, next) => applyRateLimit(c, next), handleFetchMagicTransit);
+app.post("/api/mt-summary", (c, next) => applyRateLimit(c, next), handleMtSummary);
 
 // Remediation register — lifecycle tracking of Zero Trust findings (D1)
 app.get  ("/api/remediation",     handleGetRemediation);

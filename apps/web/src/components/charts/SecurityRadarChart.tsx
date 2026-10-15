@@ -24,6 +24,7 @@ interface Props {
   title?: string;
   subtitle?: string;
   height?: number;
+  color?: string;
 }
 
 // Convert polar (angle, radius) to cartesian (x, y)
@@ -67,7 +68,7 @@ interface TooltipState {
   d: RadarDimension;
 } 
 
-export default function SecurityRadarChart({ data, title, subtitle }: Props) {
+export default function SecurityRadarChart({ data, title, subtitle, color }: Props) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
 
   const n      = data.length;
@@ -101,7 +102,7 @@ export default function SecurityRadarChart({ data, title, subtitle }: Props) {
 
   // ── Determine overall tone for fill ──────────────────────────────────────
   const avg = data.reduce((s, d) => s + d.score, 0) / n;
-  const fillColor = scoreColor(avg);
+  const fillColor = color ?? scoreColor(avg);
 
   // ── Axis label positions (slightly outside outer ring) ───────────────────
   const labelR = maxR + 28;
@@ -169,17 +170,17 @@ export default function SecurityRadarChart({ data, title, subtitle }: Props) {
           {/* ── Score dots + labels ── */}
           {dataPoints.map((pt, i) => {
             const d     = data[i];
-            const color = d.maturityColor ?? scoreColor(d.score);
+            const pointColor = d.maturityColor ?? color ?? scoreColor(d.score);
             return (
               <g key={i}>
                 {/* Glow ring */}
-                <circle cx={pt.x} cy={pt.y} r={9} fill={color} fillOpacity={0.15}/>
+                <circle cx={pt.x} cy={pt.y} r={9} fill={pointColor} fillOpacity={0.15}/>
                 {/* Dot */}
                 <circle
                   cx={pt.x}
                   cy={pt.y}
                   r={5}
-                  fill={color}
+                  fill={pointColor}
                   stroke="#fff"
                   strokeWidth={1.5}
                   style={{ cursor: "pointer" }}
@@ -198,7 +199,7 @@ export default function SecurityRadarChart({ data, title, subtitle }: Props) {
                   y={pt.y - 10}
                   fontSize={9}
                   fontWeight="700"
-                  fill={color}
+                  fill={pointColor}
                   textAnchor="middle"
                   dominantBaseline="middle"
                 >

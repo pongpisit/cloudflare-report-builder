@@ -111,8 +111,8 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
   if (!name || name.length > 120) return { error: "name is required (max 120 chars)" };
 
   const reportType = b.reportType;
-  if (reportType !== "appsec" && reportType !== "zero-trust")
-    return { error: "reportType must be 'appsec' or 'zero-trust'" };
+  if (reportType !== "appsec" && reportType !== "zero-trust" && reportType !== "magic-transit")
+    return { error: "reportType must be 'appsec', 'zero-trust' or 'magic-transit'" };
 
   let zoneId: string | null = null;
   let zoneName: string | null = null;

@@ -2,8 +2,10 @@ import { useState, useEffect } from "react";
 import HomePage from "./pages/HomePage";
 import ReportPage from "./pages/ReportPage";
 import ZeroTrustReportPage from "./pages/ZeroTrustReportPage";
+import MagicTransitReportPage from "./pages/MagicTransitReportPage";
+import type { MagicTransitData } from "../../../shared/magic-transit";
 import SchedulesPage from "./pages/SchedulesPage";
-import { fetchAppsecData, fetchZeroTrustData, fetchUserEmail } from "./services/api";
+import { fetchAppsecData, fetchZeroTrustData, fetchMagicTransitData, fetchUserEmail } from "./services/api";
 import { ACCESS_EXPIRED_EVENT, reauthenticateNow } from "./services/access-reauth";
 import type { AppSecData, ZeroTrustData, ReportInput } from "./types";
 
@@ -17,7 +19,7 @@ type Phase = "home" | "loading" | "report" | "schedules";
  * network access: the recipient's browser does the rendering at open time.
  */
 export interface EmbeddedReport {
-  kind: "appsec" | "zero-trust";
+  kind: "appsec" | "zero-trust" | "magic-transit";
   data: unknown;
   input: ReportInput;
   aiSummary?: string;
@@ -31,6 +33,7 @@ const EMBEDDED_REPORT =
     : undefined;
 
 export default function App() {
+  const [mtData, setMtData] = useState<MagicTransitData | null>(EMBEDDED_REPORT?.kind === "magic-transit" ? EMBEDDED_REPORT.data as MagicTransitData : null);
   const [phase, setPhase]             = useState<Phase>(EMBEDDED_REPORT ? "report" : "home");
   const [error, setError]             = useState<string>("");
   const [appsecData, setAppsecData]   = useState<AppSecData | null>(
@@ -65,7 +68,10 @@ export default function App() {
     setError("");
     setReportInput(input);
     try {
-      if (input.product === "zero-trust") {
+      setAppsecData(null); setZtData(null); setMtData(null);
+      if (input.product === "magic-transit") {
+        setMtData(await fetchMagicTransitData(input));
+      } else if (input.product === "zero-trust") {
         const data = await fetchZeroTrustData(input);
         setZtData(data);
         setAppsecData(null);
@@ -82,6 +88,7 @@ export default function App() {
   }
 
   function handleReset() {
+    setMtData(null);
     setAppsecData(null);
     setZtData(null);
     setReportInput(null);
@@ -99,6 +106,9 @@ export default function App() {
   }
 
   if (phase === "report" && reportInput) {
+    if (reportInput.product === "magic-transit" && mtData) {
+      return <><MagicTransitReportPage data={mtData} input={reportInput} onReset={handleReset} userEmail={userEmail} />{accessExpired && <AccessExpiredOverlay />}</>;
+    }
     if (reportInput.product === "zero-trust" && ztData) {
       return (
         <>

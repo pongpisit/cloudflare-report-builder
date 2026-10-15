@@ -22,16 +22,20 @@ import { generateAppsecData } from "./routes/fetch-appsec";
 import { generateZerotrustData } from "./routes/fetch-zerotrust";
 import { generateAiSummary } from "./routes/ai-summary";
 import { generateZtSummary } from "./routes/ai-zt-summary";
+import { generateMagicTransitData } from "./routes/fetch-magic-transit";
+import { generateMtSummary } from "./routes/ai-magic-transit-summary";
 import {
   applySubjectTokens,
   renderAppsecEmail,
   renderZtEmail,
+  renderMtEmail,
   type ReportEmailParams,
   type RenderedEmail,
 } from "./services/email-template";
 import {
   renderAppsecFullReport,
   renderZtFullReport,
+  renderMtFullReport,
   type FullReportParams,
 } from "./services/full-report-html";
 import { buildEmbeddedReportAttachment } from "./services/attachment-builder";
@@ -211,6 +215,7 @@ export async function runSchedule(
     // the full-report attachment, so hoisted here.
     let appsec: Awaited<ReturnType<typeof generateAppsecData>> | undefined;
     let zt: Awaited<ReturnType<typeof generateZerotrustData>> | undefined;
+    let mt: Awaited<ReturnType<typeof generateMagicTransitData>> | undefined;
     let aiSummary = "";
 
     if (row.report_type === "appsec") {
@@ -243,7 +248,18 @@ export async function runSchedule(
       };
       rendered = renderAppsecEmail(appsec, params);
       subject = applySubjectTokens(row.subject, { zone: appsec.meta?.zoneName });
-    } else {
+    } else if (row.report_type === "magic-transit") {
+      mt = await generateMagicTransitData({
+        token, accountId, days: row.days, tzOffset,
+        rangeMode: row.range_mode ?? "rolling", period: (row.period ?? undefined) as ReportPeriod | undefined,
+        sinceDate: row.since_date ?? undefined, untilDate: row.until_date ?? undefined,
+        sinceTime: row.since_time ?? undefined, untilTime: row.until_time ?? undefined,
+        monthsAgo: row.months_ago ?? undefined,
+      });
+      aiSummary = await generateMtSummary(env, mt, isPoc).catch(() => "");
+      rendered = renderMtEmail(mt, { scheduleName: row.name, message: row.message ?? "", isPoc, clientName: row.client_name, clientLogo: row.client_logo ?? undefined, aiSummary });
+      subject = applySubjectTokens(row.subject, { account: mt.meta.accountName });
+    } else if (row.report_type === "zero-trust") {
       zt = await generateZerotrustData({
         token, accountId, days: row.days, tzOffset,
         rangeMode: row.range_mode ?? "rolling",
@@ -269,6 +285,8 @@ export async function runSchedule(
       };
       rendered = renderZtEmail(zt, params);
       subject = applySubjectTokens(row.subject, { account: zt.meta?.accountName });
+    } else {
+      throw new Error("Unsupported schedule report type");
     }
 
     // Full report attachment — the same generated data as the on-demand
@@ -289,7 +307,7 @@ export async function runSchedule(
     const inputForEmbedded = {
       token: "",
       zoneId: row.zone_id ?? "",
-      accountId: row.account_id ?? "",
+      accountId,
       days: row.days,
       tzOffset,
       rangeMode: row.range_mode ?? "rolling",
@@ -302,21 +320,21 @@ export async function runSchedule(
       (await buildEmbeddedReportAttachment(
         env,
         {
-          kind: row.report_type === "appsec" ? "appsec" : "zero-trust",
-          data: appsec ?? zt,
+          kind: row.report_type,
+          data: appsec ?? zt ?? mt,
           input: inputForEmbedded,
           aiSummary,
-          generatedAt: (appsec?.meta?.generatedAt ?? zt?.meta?.generatedAt) ?? new Date().toISOString(),
+          generatedAt: (appsec?.meta?.generatedAt ?? zt?.meta?.generatedAt ?? mt?.meta.generatedAt) ?? new Date().toISOString(),
           scheduleName: row.name,
         },
-        row.report_type === "appsec"
+        mt ? `Magic Transit Report — ${mt.meta.accountName}` : row.report_type === "appsec"
           ? `App Security Report — ${appsec?.meta?.zoneName ?? "Zone"}`
           : `Cloudflare One Report — ${zt?.meta?.accountName ?? "Account"}`
       ))
-      ?? (appsec
+      ?? (mt ? renderMtFullReport(mt, fullParams) : appsec
         ? renderAppsecFullReport(appsec, fullParams)
         : renderZtFullReport(zt as Awaited<ReturnType<typeof generateZerotrustData>>, fullParams));
-    const attachmentDate = (appsec ? appsec.meta?.until : zt?.meta?.until)
+    const attachmentDate = (appsec?.meta?.until ?? zt?.meta?.until ?? mt?.meta.until)
       ?? new Date().toISOString().slice(0, 10);
 
     const sendResult = await sendReportEmail(env, {

@@ -84,6 +84,7 @@ async function serialiseReport(): Promise<string> {
   const clone = document.cloneNode(true) as Document;
   clone.querySelectorAll(".print\\:hidden").forEach((el) => el.remove());
   clone.querySelectorAll("script").forEach((el) => el.remove());
+  clone.querySelectorAll('link[rel="modulepreload"], link[rel="preload"], link[rel="preconnect"], link[href*="fonts.googleapis.com"]').forEach(el => el.remove());
   await inlineStylesheets(clone);
   const extraStyle = clone.createElement("style");
   extraStyle.textContent = `

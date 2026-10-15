@@ -19,6 +19,7 @@ import geoData from "../../assets/countries-50m.json";
 interface Props {
   data: CountryDataRow[];
   height?: number;
+  unit?: string;
 }
 
 const COLOR_STOPS = [
@@ -46,7 +47,7 @@ function interpolateHex(a: string, b: string, t: number): string {
   return `#${r}${g}${bl}`;
 }
 
-export default function WorldMap({ data, height = 340 }: Props) {
+export default function WorldMap({ data, height = 340, unit = "requests" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(700);
   const [tooltip, setTooltip] = useState<{
@@ -199,7 +200,7 @@ export default function WorldMap({ data, height = 340 }: Props) {
             <span className="text-white/50 font-mono">({tooltip.code})</span>
           </p>
           <p className="text-cf-orange-light mt-0.5">
-            {formatNumber(tooltip.requests)} requests
+            {formatNumber(tooltip.requests)} {unit}
           </p>
         </div>
       )}
