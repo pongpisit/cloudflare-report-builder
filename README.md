@@ -87,8 +87,18 @@ generate:
 - An **audit archive** of every generated report (R2), listable and
   re-viewable later.
 
-**No mock data, ever.** See
+**Production reports use live data.** See
 [Data sources and honesty guarantees](#data-sources-and-honesty-guarantees).
+
+### Example reports
+
+Explore [three synthetic report examples](examples/README.md), including
+standalone offline HTML and rendered screenshots. All example values are
+invented and explicitly labeled; no customer data or credentials are included.
+
+| AppSec | Zero Trust / Cloudflare One | Magic Transit |
+|---|---|---|
+| [![Synthetic AppSec preview](examples/previews/appsec-cover.png)](examples/README.md#appsec) | [![Synthetic Zero Trust preview](examples/previews/zero-trust-cover.png)](examples/README.md#zero-trust--cloudflare-one) | [![Synthetic Magic Transit preview](examples/previews/magic-transit-cover.png)](examples/README.md#magic-transit) |
 
 See the [visualization roadmap](VISUALIZATION_ROADMAP.md) for proposed Three.js
 and linked-chart enhancements across Magic Transit, AppSec and Cloudflare One.
