@@ -26,9 +26,16 @@ ENVIRONMENT = "production"
 ALLOWED_ORIGIN = ""
 CF_ACCOUNT_ID = ""
 EMAIL_FROM = ""
+# Access-protected app: set the verified team domain and application AUD.
+# CF_ACCESS_TEAM_DOMAIN = "[PLACEHOLDER].cloudflareaccess.com"
+# CF_ACCESS_AUD = "[PLACEHOLDER]"
+# Alternatively set MANAGE_SECRET using `wrangler secret put MANAGE_SECRET`.
 
 [ai]
 binding = "AI"
+
+[browser]
+binding = "BROWSER"
 
 [[r2_buckets]]
 binding = "AUDIT_BUCKET"

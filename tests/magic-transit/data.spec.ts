@@ -42,6 +42,40 @@ test("partial failures stay unavailable, not measured zero", async () => {
   } finally { globalThis.fetch = original; }
 });
 
+test("priority attack rankings use DDoS mitigation, preserve joint dimensions and never infer applications", async () => {
+  const mock = mockUpstream(), original = globalThis.fetch;
+  globalThis.fetch = mock.fetch;
+  try {
+    const data = await generateMagicTransitData({ token: TEST_TOKEN, accountId: TEST_ACCOUNT, days: 1, tzOffset: 0 });
+    expect(data.attackRankings?.sources).toEqual([
+      { ip: "192.0.2.9", country: "US", bits: 640000, packets: 640 },
+      { ip: "192.0.2.9", country: "JP", bits: 240000, packets: 240 },
+    ]);
+    expect(data.attackRankings?.targets).toEqual([
+      { ip: "203.0.113.10", port: 443, protocol: "TCP", application: null, bits: 640000, packets: 640 },
+      { ip: "203.0.113.10", port: 53, protocol: "UDP", application: null, bits: 240000, packets: 240 },
+    ]);
+    expect(data.attackRankings?.sourceCountries?.[0]).toEqual({ name: "US", bits: 640000, packets: 640 });
+    const calls = mock.calls.filter(c => c.query.includes("rows: dosdNetworkAnalyticsAdaptiveGroups") && /ipSourceAddress|sourceCountry|ipDestinationAddress/.test(c.query));
+    expect(calls).toHaveLength(3);
+    expect(calls.every(c => (c.variables.filter as { direction: string; outcome: string }).direction === "ingress" && (c.variables.filter as { outcome: string }).outcome === "drop")).toBe(true);
+    expect(data.summary.traffic?.bits).toBe(1000000); // The all-traffic total is a different population.
+    expect(data.attacks[0].droppedBits).toBe(80000); // Event lifetime is a different time basis.
+  } finally { globalThis.fetch = original; }
+});
+
+test("unavailable DDoS source/target rankings remain null rather than borrowing all-traffic rankings", async () => {
+  const mock = mockUpstream({ failAttackRankings: true }), original = globalThis.fetch;
+  globalThis.fetch = mock.fetch;
+  try {
+    const data = await generateMagicTransitData({ token: TEST_TOKEN, accountId: TEST_ACCOUNT, days: 1, tzOffset: 0 });
+    expect(data.attackRankings).toEqual({ sources: null, sourceCountries: null, targets: null });
+    expect(data.errors.attackSources).toContain("unavailable");
+    expect(data.rankings.sourceIps.length).toBeGreaterThan(0);
+    expect(data.summary.attackCount).toBe(1);
+  } finally { globalThis.fetch = original; }
+});
+
 test("missing attack measurements remain null without losing the event", async () => {
   const mock = mockUpstream({ omitAttackMeasurements: true }), original = globalThis.fetch;
   globalThis.fetch = mock.fetch;

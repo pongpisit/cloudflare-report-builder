@@ -42,6 +42,10 @@ import { buildEmbeddedReportAttachment } from "./services/attachment-builder";
 import { sendReportEmail } from "./services/send-report-email";
 import { getEffectiveBackendConfig } from "./services/settings";
 import type { ReportPeriod } from "./services/cf-graphql";
+import { generateCustomDashboardData } from "./services/cf-custom-dashboard";
+import { validateDashboardTemplate } from "../../../shared/custom-dashboard-template";
+import { renderCustomDashboardEmail } from "./services/custom-dashboard-email";
+import { renderDashboardPdf } from "./services/dashboard-pdf";
 
 export interface ScheduleRunResult {
   ok: boolean;
@@ -216,9 +220,20 @@ export async function runSchedule(
     let appsec: Awaited<ReturnType<typeof generateAppsecData>> | undefined;
     let zt: Awaited<ReturnType<typeof generateZerotrustData>> | undefined;
     let mt: Awaited<ReturnType<typeof generateMagicTransitData>> | undefined;
+    let dashboard: Awaited<ReturnType<typeof generateCustomDashboardData>> | undefined;
     let aiSummary = "";
 
-    if (row.report_type === "appsec") {
+    if (row.report_type === "custom-dashboard") {
+      if (!row.zone_id || !row.dashboard_template) throw new Error("Dashboard schedule requires a zone and saved widget template.");
+      if (!env.BROWSER && (!env.PDF_API_TOKEN || !env.PDF_ACCOUNT_ID)) throw new Error("Scheduled dashboard PDFs require a BROWSER binding, or PDF_API_TOKEN (Browser Run Edit) and PDF_ACCOUNT_ID.");
+      dashboard = await generateCustomDashboardData({ token, accountId, zoneId: row.zone_id, zoneName: row.zone_name ?? undefined,
+        template: validateDashboardTemplate(JSON.parse(row.dashboard_template)), days: row.days, tzOffset,
+        rangeMode: row.range_mode ?? "rolling", period: (row.period ?? undefined) as ReportPeriod | undefined,
+        monthsAgo: row.months_ago ?? undefined, sinceDate: row.since_date ?? undefined, untilDate: row.until_date ?? undefined,
+        sinceTime: row.since_time ?? undefined, untilTime: row.until_time ?? undefined });
+      rendered = renderCustomDashboardEmail(dashboard, row.message ?? "");
+      subject = applySubjectTokens(row.subject, { zone: dashboard.zoneName });
+    } else if (row.report_type === "appsec") {
       if (!row.zone_id) throw new Error("AppSec schedule has no zone configured");
       appsec = await generateAppsecData({
         token,
@@ -321,21 +336,33 @@ export async function runSchedule(
         env,
         {
           kind: row.report_type,
-          data: appsec ?? zt ?? mt,
+          data: appsec ?? zt ?? mt ?? dashboard,
           input: inputForEmbedded,
           aiSummary,
           generatedAt: (appsec?.meta?.generatedAt ?? zt?.meta?.generatedAt ?? mt?.meta.generatedAt) ?? new Date().toISOString(),
           scheduleName: row.name,
         },
-        mt ? `Magic Transit Report — ${mt.meta.accountName}` : row.report_type === "appsec"
+        dashboard ? dashboard.title : mt ? `Magic Transit Report — ${mt.meta.accountName}` : row.report_type === "appsec"
           ? `App Security Report — ${appsec?.meta?.zoneName ?? "Zone"}`
           : `Cloudflare One Report — ${zt?.meta?.accountName ?? "Account"}`
       ))
-      ?? (mt ? renderMtFullReport(mt, fullParams) : appsec
+      ?? (dashboard ? null : mt ? renderMtFullReport(mt, fullParams) : appsec
         ? renderAppsecFullReport(appsec, fullParams)
         : renderZtFullReport(zt as Awaited<ReturnType<typeof generateZerotrustData>>, fullParams));
     const attachmentDate = (appsec?.meta?.until ?? zt?.meta?.until ?? mt?.meta.until)
       ?? new Date().toISOString().slice(0, 10);
+
+    if (!fullHtml) throw new Error("Dashboard renderer bundle is unavailable; rebuild and deploy the web assets before scheduling.");
+    const attachments: import("./services/send-report-email").SendReportEmailParams["attachments"] = [{
+      filename: `${row.report_type}-report-${attachmentDate}.html`, type: "text/html", content: fullHtml,
+    }];
+    if (dashboard) {
+      const pdf = await renderDashboardPdf(env, fullHtml);
+      attachments.unshift({ filename: `custom-dashboard-report-${attachmentDate}.pdf`, type: "application/pdf", content: pdf });
+      await env.AUDIT_BUCKET.put(`scheduled/${row.id}/${startedAt.replace(/[:.]/g, "-")}-full.pdf`, pdf, {
+        httpMetadata: { contentType: "application/pdf" }, customMetadata: { email: "scheduled", hostname: "scheduled-custom-dashboard", zoneName: dashboard.zoneName, days: String(row.days), generatedAt: startedAt },
+      }).catch(() => console.warn("[scheduler] dashboard PDF archive failed"));
+    }
 
     const sendResult = await sendReportEmail(env, {
       to: recipients,
@@ -343,11 +370,7 @@ export async function runSchedule(
       html: rendered.html,
       text: rendered.text,
       from: emailFrom,
-      attachments: [{
-        filename: `${row.report_type}-report-${attachmentDate}.html`,
-        type: "text/html",
-        content: fullHtml,
-      }],
+      attachments,
     });
     ok = sendResult.ok;
     error = sendResult.error;

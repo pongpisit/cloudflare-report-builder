@@ -27,6 +27,10 @@ EMAIL_FROM = ""
 [ai]
 binding = "AI"
 
+# Automated dashboard PDFs use this binding; no separate rendering API token.
+[browser]
+binding = "BROWSER"
+
 [[r2_buckets]]
 binding = "AUDIT_BUCKET"
 bucket_name = "poc-report-audit"

@@ -18,6 +18,9 @@ import {
   fetchScheduleZonesWithCredentials, testCredentials,
 } from "../services/api";
 import BackendSettingsForm from "../components/BackendSettingsForm";
+import DashboardTemplateEditor from "../components/DashboardTemplateEditor";
+import { defaultDashboardTemplate, validateDashboardTemplate } from "../../../../shared/custom-dashboard-template";
+import SavedDashboardSelector from "../components/SavedDashboardSelector";
 
 interface Props {
   userEmail?: string | null;
@@ -449,7 +452,7 @@ function ScheduleCard({ schedule: s, busy, onEdit, onDelete, onSendNow, onToggle
                 backgroundColor: s.reportType === "appsec" ? "#1c1f2a" : "#ba0816",
                 color: "#f4f4f4",
               }}>
-                {s.reportType === "appsec" ? "App Security" : s.reportType === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
+                {s.reportType === "custom-dashboard" ? "Custom Dashboard" : s.reportType === "appsec" ? "App Security" : s.reportType === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
               </span>
               {!s.enabled && (
                 <span style={{ fontSize: 10, letterSpacing: "0.09375rem", textTransform: "uppercase", color: "#5d5e65", padding: "3px 0" }}>
@@ -462,7 +465,7 @@ function ScheduleCard({ schedule: s, busy, onEdit, onDelete, onSendNow, onToggle
             </h3>
             <p style={{ margin: "6px 0 0", fontSize: 12, color: "#5d5e65" }}>
               {describeSchedule(s)} · {describeRange(s)} report
-              {s.reportType === "appsec" && s.zoneName ? ` · ${s.zoneName}` : ""}
+              {(s.reportType === "appsec" || s.reportType === "custom-dashboard") && s.zoneName ? ` · ${s.zoneName}` : ""}
               {s.apiTokenSet && (
                 <span title={`Uses its own Cloudflare credentials${s.accountId ? ` (account ${s.accountId})` : ""} — token ${s.apiTokenHint ?? ""}`}
                   style={{
@@ -568,6 +571,8 @@ function configToInput(s: ScheduleConfig, enabledOverride?: boolean): ScheduleIn
     clientName: s.clientName,
     clientLogo: s.clientLogo,
     enabled: enabledOverride ?? s.enabled,
+    accountId: s.accountId,
+    dashboardTemplate: s.dashboardTemplate ?? null,
   };
 }
 
@@ -585,6 +590,8 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [reportType, setReportType] = useState<ScheduleReportType>(initial?.reportType ?? "appsec");
+  const [dashboardTemplate, setDashboardTemplate] = useState(initial?.dashboardTemplate ?? defaultDashboardTemplate());
+  const [dashboardBlocked, setDashboardBlocked] = useState(false);
   const [zoneId, setZoneId] = useState(initial?.zoneId ?? "");
   const [zoneName, setZoneName] = useState(initial?.zoneName ?? "");
   const [days, setDays] = useState<number>(initial?.days ?? 30);
@@ -678,7 +685,12 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
     setFormError("");
 
     if (!name.trim()) { setFormError("Schedule name is required."); return; }
-    if (reportType === "appsec" && !zoneId) { setFormError("Select a zone for the App Security report."); return; }
+    if ((reportType === "appsec" || reportType === "custom-dashboard") && !zoneId) { setFormError("Select a zone for the report."); return; }
+    if (reportType === "custom-dashboard") {
+      if (dashboardBlocked) { setFormError("Select a supported saved dashboard, or explicitly choose Configure query template."); return; }
+      try { validateDashboardTemplate(dashboardTemplate); }
+      catch (e) { setFormError(e instanceof Error ? e.message : "Invalid dashboard template"); return; }
+    }
     if (recipients.length === 0) { setFormError("Add at least one recipient email address."); return; }
     if (!subject.trim()) { setFormError("Email subject is required."); return; }
     if (rangeMode === "custom") {
@@ -700,8 +712,9 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
     const input: ScheduleInput = {
       name: name.trim(),
       reportType,
-      zoneId: reportType === "appsec" ? zoneId : null,
-      zoneName: reportType === "appsec" ? (selectedZone?.name ?? zoneName ?? null) : null,
+      zoneId: reportType === "appsec" || reportType === "custom-dashboard" ? zoneId : null,
+      zoneName: reportType === "appsec" || reportType === "custom-dashboard" ? (selectedZone?.name ?? zoneName ?? null) : null,
+      dashboardTemplate: reportType === "custom-dashboard" ? validateDashboardTemplate(dashboardTemplate) : null,
       days,
       tzOffset,
       rangeMode,
@@ -769,8 +782,8 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
         {/* Report type */}
         <div>
           <label className="ar-input-label"><Shield size={10} style={{ display: "inline", marginRight: 4 }} /> Report Type</label>
-          <div style={{ display: "flex", gap: 0 }}>
-            {(["appsec", "zero-trust", "magic-transit"] as const).map((p) => (
+          <div style={{ display: "flex", gap: 0, flexWrap: "wrap" }}>
+            {(["appsec", "zero-trust", "magic-transit", "custom-dashboard"] as const).map((p) => (
               <button key={p} type="button" onClick={() => setReportType(p)}
                 style={{
                   padding: "14px 28px 12px", flex: 1,
@@ -782,13 +795,14 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
                   color: reportType === p ? "#ffffff" : "#5d5e65",
                   transition: "all 0.15s", marginRight: -1,
                 }}>
-                {p === "appsec" ? "App Security" : p === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
+                {p === "custom-dashboard" ? "Custom Dashboard" : p === "appsec" ? "App Security" : p === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
               </button>
             ))}
           </div>
         </div>
 
         {/* Per-schedule customer credentials (multi-customer) */}
+        {reportType === "custom-dashboard" && <p className="text-xs mb-4">Use an Analytics Read token with access to this zone; add Zone Read to list zones. Each run fetches fresh analytics and attaches PDF + HTML. The Worker needs a Browser Rendering binding or operator PDF API credentials.</p>}
         {reportType === "magic-transit" && <p className="text-xs text-cf-gray-500">Magic Transit uses account-scoped credentials with Account Analytics Read. Add Magic Transit Read for tunnel/route configuration and product-specific read permissions for policy sections. The full visual report is attached as HTML; dates use this schedule's timezone.</p>}
         <div style={{ backgroundColor: "#fafafa", border: "1px solid #e2e2e2", padding: 16, marginBottom: 16 }}>
           <div className="flex items-center gap-2 mb-1">
@@ -883,7 +897,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
         </div>
 
         {/* Zone picker (appsec) */}
-        {reportType === "appsec" && (
+        {(reportType === "appsec" || reportType === "custom-dashboard") && (
           <div>
             <label className="ar-input-label">
               <Globe size={10} style={{ display: "inline", marginRight: 4 }} /> Select Zone
@@ -918,6 +932,12 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
             )}
           </div>
         )}
+
+        {reportType === "custom-dashboard" && <div className="cd-fields">
+          <label>Dashboard zone ID (manual)<input className="ar-input" value={zoneId} maxLength={32} onChange={e => setZoneId(e.target.value)} /></label>
+          <label>Dashboard zone label<input className="ar-input" value={zoneName} maxLength={200} placeholder="example.com" onChange={e => setZoneName(e.target.value)} /></label>
+        </div>}
+        {reportType === "custom-dashboard" && <div><SavedDashboardSelector credentials={{ apiToken: removeToken ? null : apiToken.trim() || undefined, accountId: accountId.trim() || undefined, scheduleId: initial?.id }} zoneId={zoneId} value={dashboardTemplate} onChange={setDashboardTemplate} onBlockedChange={setDashboardBlocked} /><DashboardTemplateEditor value={dashboardTemplate} onChange={setDashboardTemplate} /></div>}
 
         {/* Timeframe */}
         <div>
@@ -1180,7 +1200,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
         </div>
 
         {/* POC framing */}
-        <label style={{
+        {reportType !== "custom-dashboard" && <label style={{
           display: "flex", alignItems: "flex-start", gap: 12,
           padding: "14px 16px", cursor: "pointer",
           border: "1px solid #c4c4c4", backgroundColor: "#fafafa",
@@ -1195,10 +1215,10 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
               POC framing for the AI executive summary and recommendations. Uncheck for a neutral assessment tone.
             </span>
           </div>
-        </label>
+        </label>}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
+          {reportType !== "custom-dashboard" && <div>
             <label className="ar-input-label"><User size={10} style={{ display: "inline", marginRight: 4 }} /> Client Name (optional)</label>
             <input type="text" value={clientName} onChange={(e) => setClientName(e.target.value)}
               placeholder="e.g. Acme Corp" className="ar-input" maxLength={200} />
@@ -1226,7 +1246,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
                 Shown on the email cover and the attached report (PNG/JPG/SVG/WebP, under 2MB).
               </p>
             </div>
-          </div>
+          </div>}
           {initial && (
             <div>
               <label className="ar-input-label"><Clock size={10} style={{ display: "inline", marginRight: 4 }} /> Status</label>

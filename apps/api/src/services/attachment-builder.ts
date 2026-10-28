@@ -26,7 +26,7 @@ import type { Env } from "../types";
 
 /** Shape consumed by the web app's embedded mode (App.tsx → EmbeddedReport). */
 export interface EmbeddedReportPayload {
-  kind: "appsec" | "zero-trust" | "magic-transit";
+  kind: "appsec" | "zero-trust" | "magic-transit" | "custom-dashboard";
   data: unknown;
   input: Record<string, unknown>;
   aiSummary?: string;
@@ -76,8 +76,11 @@ export async function buildEmbeddedReportAttachment(
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+${payload.kind === "custom-dashboard" ? `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'"/>` : ""}
 <title>${title.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c] as string))}</title>
 <style>${cssSafe}</style>
+${payload.kind === "custom-dashboard" ? `<!-- Standalone dashboard: one page context avoids headless Chromium SVG page breaks. -->
+<style>@media print { @page { size: A4; margin: 12mm; } @page :first { margin: 12mm; } .cd-page #report-content { page: auto; } }</style>` : ""}
 </head>
 <body>
 <div id="root"></div>

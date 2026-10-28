@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Printer, FileText, RefreshCw, Loader2, CheckCircle } from "lucide-react";
 import type { ReportInput } from "../types";
@@ -21,19 +21,33 @@ import { HealthHeatmap, AttackTimeline, ProtocolPortMatrix, RouteTopology, mtNum
 import "./magic-transit.css";
 
 const BLUE = "#078dad", ORANGE = "#f6821f", RED = "#d75267", GREEN = "#109b8d";
+const countryNames = new Intl.DisplayNames(["en"], { type: "region" });
+const countryLabel = (code: string) => /^[A-Z]{2}$/.test(code) ? countryNames.of(code) || code : code;
 function Panel({ title, subtitle, children, id }: { title: string; subtitle?: string; children: ReactNode; id?: string }) {
   return <section className="mt-panel" id={id}><header><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</header>{children}</section>;
 }
-function EvidenceTable({ headers, rows }: { headers: string[]; rows: ReactNode[][] }) {
-  return <div className="mt-table-wrap"><table><thead><tr>{headers.map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody></table>{!rows.length && <p className="mt-empty">No records returned. See data availability for query errors.</p>}</div>;
+function EvidenceTable({ headers, rows, label, collapsed = false, previewRows = 6 }: { headers: string[]; rows: ReactNode[][]; label?: string; collapsed?: boolean; previewRows?: number }) {
+  const id = useId(), expandable = rows.length > 0 && (collapsed || rows.length > previewRows);
+  // Native checkbox disclosure works in script-free saved HTML as well as the React report.
+  // All rows stay in the document; print styles reveal them without scrolling or JS.
+  return <div className={`mt-evidence${collapsed ? " mt-evidence-collapsed" : ""}`}>
+    {expandable && <input className="mt-evidence-toggle" type="checkbox" id={id} aria-controls={`${id}-table`} />}
+    <div className="mt-table-wrap" id={`${id}-table`}><table aria-label={label ?? headers.join(" / ")}><thead><tr>{headers.map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map((row, i) => <tr className={i >= previewRows ? "mt-evidence-extra" : undefined} key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody></table>{!rows.length && <p className="mt-empty">No records returned. See data availability for query errors.</p>}</div>
+    {expandable && <label className="mt-evidence-control" htmlFor={id}><span className="mt-evidence-show">{collapsed ? `View data · ${rows.length.toLocaleString()} categories` : `Show all ${rows.length.toLocaleString()} rows`}</span><span className="mt-evidence-hide">{collapsed ? "Hide data" : `Show first ${previewRows} rows`}</span></label>}
+  </div>;
 }
 function Rank({ title, rows = [] }: { title: string; rows?: MtRank[] }) {
-  return <div><HorizontalBarChart title={title} data={rows.slice(0, 10).map(r => ({ name: r.name, value: r.bits / 8 }))} color={BLUE} xTickFormatter={v => mtNumber(v, "B")} subtitle="Ranked by bytes · top categories" />
-    <EvidenceTable headers={["Category", "Bytes", "Packets"]} rows={rows.map(r => [r.name, mtBytes(r.bits), mtNumber(r.packets)])} /></div>;
+  const top = [...rows].sort((a, b) => b.bits - a.bits).slice(0, 6);
+  return <div className="mt-rank"><HorizontalBarChart title={title} height={Math.max(88, top.length * 24 + 26)} data={top.map(r => ({ name: r.name, value: r.bits / 8 }))} color={BLUE} xTickFormatter={v => mtNumber(v, "B")} subtitle={`Ranked by bytes · top ${top.length} returned categories`} />
+    {rows.length > 0 && <EvidenceTable collapsed label={title} headers={["Category", "Bytes", "Packets"]} rows={[...rows].sort((a, b) => b.bits - a.bits).map(r => [r.name, mtBytes(r.bits), mtNumber(r.packets)])} />}</div>;
 }
 function Distribution({ title, rows }: { title: string; rows: MtRank[] }) {
   const total = rows.reduce((v, r) => v + r.packets, 0);
-  return <PieBreakdownChart title={title} subtitle="Packet share within returned categories" legendPosition="bottom" data={rows.map(r => ({ name: r.name, value: r.packets, pct: total ? Number((r.packets / total * 100).toFixed(1)) : 0 }))} colors={[BLUE, ORANGE, GREEN, RED, "#4862a6", "#93b6c8"]} />;
+  if (!rows.length) return <div className="mt-rank"><h3>{title}</h3><p className="mt-caption">No distribution available. See collection status.</p></div>;
+  const sorted = [...rows].sort((a, b) => b.packets - a.packets);
+  const shown = sorted.length > 6 ? [...sorted.slice(0, 5), { name: "Other returned categories", packets: sorted.slice(5).reduce((v, r) => v + r.packets, 0), bits: sorted.slice(5).reduce((v, r) => v + r.bits, 0) }] : sorted;
+  return <div className="mt-rank"><PieBreakdownChart title={title} height={220} innerRadius={32} subtitle="Packet share within returned categories · at most six legend entries" legendPosition="bottom" data={shown.map(r => ({ name: r.name, value: r.packets, pct: total ? Number((r.packets / total * 100).toFixed(1)) : 0 }))} colors={[BLUE, ORANGE, GREEN, RED, "#4862a6", "#93b6c8"]} />
+    <EvidenceTable collapsed label={`${title} distribution`} headers={["Category", "Packets", "Bytes"]} rows={sorted.map(r => [r.name, mtNumber(r.packets), mtBytes(r.bits)])} /></div>;
 }
 function pivot(points: MtTrafficPoint[], tz: number) {
   const byTime = new Map<string, Record<string, string | number>>();
@@ -92,6 +106,14 @@ export default function MagicTransitReportPage({ data, input, onReset, userEmail
   const tunnelNames = [...new Set([...data.tunnels.map(t => t.name), ...tunnelRollup.totals.map(p => p.tunnel), ...tunnelRollup.traffic.map(p => p.tunnel)])].sort();
   const tunnelCadence = tunnelRollup.interval === "hour" ? "Hourly" : "Daily";
   const tunnelTimeLabel = (t: string) => mtDate(t, tz);
+  const attackSources = data.attackRankings?.sources, attackTargets = data.attackRankings?.targets;
+  const sourceRows = [...(attackSources ?? [])].sort((a, b) => b.bits - a.bits);
+  const targetRows = [...(attackTargets ?? [])].sort((a, b) => b.bits - a.bits);
+  const attackCountries = [...(data.attackRankings?.sourceCountries ?? [])].sort((a, b) => b.bits - a.bits);
+  const hasTargetApps = targetRows.some(r => r.application);
+  const attackEmpty = (rows: unknown[] | null | undefined) => rows == null
+    ? data.attackRankings ? "DDoS rankings unavailable. See collection status for dataset access or query errors." : "This older report does not include attack-specific rankings. Generate a new report to collect them."
+    : "No DDoS-mitigated traffic returned for the selected period.";
   return <div className="mt-report">
     <nav className="mt-toolbar print:hidden"><img src={cfLogo} alt="Cloudflare" /><span>Magic Transit · {meta.accountName}</span>{saved && <small><CheckCircle size={13} /> Archived</small>}
       {!embedded && <button onClick={onReset}><RefreshCw size={14} /> New report</button>}
@@ -111,7 +133,7 @@ export default function MagicTransitReportPage({ data, input, onReset, userEmail
         </div><NetworkGlobe data={data.rankings.sourceCountries ?? []} /></div>
         <div className="mt-hero-footer"><span>Cloudflare Network Analytics + configuration APIs</span><span>{input.partnerName || "Cloudflare"} · generated {mtDate(meta.generatedAt, tz)}</span></div>
       </section>
-      <nav className="mt-jump print:hidden" aria-label="Report sections">{[["traffic", "Traffic"], ["geography", "Geography"], ["attacks", "Attacks"], ["tunnels", "Tunnels"], ["policy", "Policy"], ["configuration", "Configuration"], ["quality", "Data quality"]].map(([id, label]) => <a key={id} href={`#mt-${id}`}>{label}</a>)}</nav>
+      <nav className="mt-jump print:hidden" aria-label="Report sections">{[["attack-priority", "Top attack sources & targets"], ["attacks", "Attack events"], ["traffic", "Traffic"], ["geography", "Geography"], ["tunnels", "Tunnels"], ["policy", "Policy"], ["configuration", "Configuration"], ["quality", "Data quality"]].map(([id, label]) => <a key={id} href={`#mt-${id}`}>{label}</a>)}</nav>
       <div className="mt-kpis">
         {[
           ["Ingress traffic", mtBytes(metrics.traffic?.bits), change(metrics.traffic?.bits, metrics.previousTraffic?.bits)],
@@ -122,16 +144,29 @@ export default function MagicTransitReportPage({ data, input, onReset, userEmail
            ["Configured tunnels", Object.keys(data.errors).some(k => k.startsWith("tunnels:")) ? data.tunnels.length ? `${data.tunnels.length} (partial)` : "Unavailable" : mtNumber(data.tunnels.length), "Current inventory · see collection errors"],
         ].map(([label, value, note]) => <article key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>)}
       </div>
+      <Panel id="mt-attack-priority" title="Top attack sources & targets" subtitle="Ranked by DDoS-mitigated ingress bytes during the selected period · sampled estimates">
+        <div className="mt-grid mt-attack-grid">
+          <div className="mt-attack-card"><h3>Top source IPs & countries</h3><p className="mt-caption">Observed packet sources · not attacker attribution</p>
+            {sourceRows.length ? <EvidenceTable label="Top DDoS source IPs" headers={["Source IP", "Country", "Mitigated bytes", "Packets"]} rows={sourceRows.map(r => [r.ip, countryLabel(r.country), mtBytes(r.bits), mtNumber(r.packets)])} /> : <p className="mt-empty">{attackEmpty(attackSources)}</p>}
+          </div>
+          <div className="mt-attack-card"><h3>Top targeted IPs & ports</h3><p className="mt-caption">Application names require an explicit mapping; ports alone do not identify apps.</p>
+            {targetRows.length ? <EvidenceTable label="Top DDoS targets" headers={["Target IP", "Port / protocol", ...(hasTargetApps ? ["Application"] : []), "Mitigated bytes", "Packets"]} rows={targetRows.map(r => [r.ip, `${r.port ?? "Unknown"} / ${r.protocol}`, ...(hasTargetApps ? [r.application || "Unmapped"] : []), mtBytes(r.bits), mtNumber(r.packets)])} /> : <p className="mt-empty">{attackEmpty(attackTargets)}</p>}
+          </div>
+        </div>
+        {attackCountries.length ? <div className="mt-country-ranks"><h3>Top attack source countries</h3><div className="mt-country-grid">{attackCountries.slice(0, 6).map(r => <article key={r.name}><span>{countryLabel(r.name)}</span><strong>{mtBytes(r.bits)}</strong><small>{mtNumber(r.packets, "packets")}</small></article>)}</div>
+          <EvidenceTable collapsed label="DDoS source country volumes" headers={["Country", "Mitigated bytes", "Packets"]} rows={attackCountries.map(r => [countryLabel(r.name), mtBytes(r.bits), mtNumber(r.packets)])} /></div> : <p className="mt-caption">{attackEmpty(data.attackRankings?.sourceCountries)}</p>}
+        <p className="mt-caption">Each ranking shows up to 25 returned categories. These are selected-period DDoS mitigation volumes, separate from all-traffic rankings and attack-event lifetime totals.</p>
+      </Panel>
       <Panel title="Executive assessment" subtitle="AI narrative grounded in the report measurements">
         {busy ? <p className="mt-empty">Preparing the executive assessment…</p> : summary ? <div className="mt-summary">{summary.split(/\n\s*\n/).filter(Boolean).map((p, i) => <p key={i}>{p}</p>)}</div> : <p className="mt-empty">{summaryError || "No AI narrative was included. Use the measurements and evidence below."}</p>}
       </Panel>
       <Panel id="mt-traffic" title="Traffic pulse" subtitle="Aligned ingress measurements · estimates from sampled network analytics">
         {times.length ? <><HorizonChart series={horizon} title="Network pulse" dateFormat={meta.days === 1 ? "MMM d HH:mm" : "MMM d"} />
-          <div className="mt-grid"><AreaTimeSeriesChart data={times} series={timeSeries} title="Ingress bandwidth" xDataKey="label" tickFormatter={mtRate} /><AreaTimeSeriesChart data={times} series={[{ key: "pps", label: "Packets per second", color: GREEN }]} title="Ingress packet rate" xDataKey="label" tickFormatter={v => mtNumber(v, "pps")} /></div>
-          <StackedBarChart data={times} series={outcomeKeys.map((key, i) => ({ key, label: `${key} packets`, color: key === "drop" ? ORANGE : [GREEN, BLUE, RED][i % 3] }))} title="Traffic outcomes" xKey="date" labelFormatter={t => mtDate(t, tz)} />
+          <div className="mt-grid"><AreaTimeSeriesChart height={200} data={times} series={timeSeries} title="Ingress bandwidth" xDataKey="label" tickFormatter={mtRate} /><AreaTimeSeriesChart height={200} data={times} series={[{ key: "pps", label: "Packets per second", color: GREEN }]} title="Ingress packet rate" xDataKey="label" tickFormatter={v => mtNumber(v, "pps")} /></div>
+          <StackedBarChart height={200} data={times} series={outcomeKeys.map((key, i) => ({ key, label: `${key} packets`, color: key === "drop" ? ORANGE : [GREEN, BLUE, RED][i % 3] }))} title="Traffic outcomes" xKey="date" labelFormatter={t => mtDate(t, tz)} />
         </> : <p className="mt-empty">Traffic time series unavailable for the selected period.</p>}
         <div className="mt-grid"><Distribution title="Traffic outcomes" rows={data.outcomes} /><Distribution title="Dropped traffic by mitigation system" rows={data.mitigationSystems} /></div>
-        {flow.links.length > 0 && <><h3>Ingress traffic disposition</h3><SankeyFlowChart data={flow} unit="packets" height={300} /><EvidenceTable headers={["Outcome", "Packets", "Bytes"]} rows={data.outcomes.map(r => [r.name, mtNumber(r.packets), mtBytes(r.bits)])} /></>}
+        {flow.links.length > 0 && <><h3>Ingress traffic disposition</h3><SankeyFlowChart data={flow} unit="packets" height={220} /><EvidenceTable headers={["Outcome", "Packets", "Bytes"]} rows={data.outcomes.map(r => [r.name, mtNumber(r.packets), mtBytes(r.bits)])} /></>}
       </Panel>
       <Panel id="mt-geography" title="Where the traffic comes from" subtitle="Source countries are distinct from Cloudflare processing locations">
         <div className="mt-switch print:hidden"><button aria-pressed={geoView === "sourceCountries"} onClick={() => setGeoView("sourceCountries")}>Source countries</button><button aria-pressed={geoView === "processingCountries"} onClick={() => setGeoView("processingCountries")}>Processing countries</button></div>
@@ -170,10 +205,10 @@ export default function MagicTransitReportPage({ data, input, onReset, userEmail
       </Panel>
       <Panel id="mt-policy" title="Protection layers & policy activity" subtitle="DDoS, firewall and advanced protection measurements are kept separate">
         {data.protections.map(p => <div key={p.key} className="mt-protection"><h3>{p.name}</h3><p className="mt-caption">Dropped volume: {mtBytes(p.volume?.bits)} · {mtNumber(p.volume?.packets, "packets")}</p>
-          <div className="mt-grid"><Rank title={`${p.name} breakdown`} rows={p.breakdown} />{p.series.length > 0 ? <AreaTimeSeriesChart title={`${p.name} bandwidth`} data={pivot(p.series, tz)} series={timeSeries} xDataKey="label" tickFormatter={mtRate} /> : <p className="mt-empty">No time series available for this layer.</p>}</div>
+          {p.breakdown.length > 0 || p.series.length > 0 ? <div className={`mt-grid${p.breakdown.length && p.series.length ? "" : " mt-grid-single"}`}>{p.breakdown.length > 0 && <Rank title={`${p.name} breakdown`} rows={p.breakdown} />}{p.series.length > 0 && <AreaTimeSeriesChart height={200} title={`${p.name} bandwidth`} data={pivot(p.series, tz)} series={timeSeries} xDataKey="label" tickFormatter={mtRate} />}</div> : <p className="mt-caption">No breakdown or time series returned for this layer. See collection status.</p>}
           {p.rules.length > 0 && <EvidenceTable headers={["Configuration rule", "Mode"]} rows={p.rules.map(r => [r.name, r.mode])} />}</div>)}
         <Rank title="Network Firewall rule activity" rows={data.ruleActivity.map(r => ({ ...r, name: data.rules.find(rule => rule.id === r.name)?.name || r.name }))} />
-        <EvidenceTable headers={["Rule", "Phase", "Action", "Status", "Expression / rate limit"]} rows={data.rules.map(r => [r.name, r.phase, r.action, r.enabled ? "Enabled" : "Disabled", <div><code>{r.expression}</code>{r.rateLimit && <p><code>{r.rateLimit}</code></p>}</div>])} />
+        <EvidenceTable headers={["Rule", "Phase", "Action", "Status", "Expression / rate limit"]} rows={data.rules.map(r => [r.name, r.phase, r.action, r.enabled ? "Enabled" : "Disabled", <div className="mt-rule-code" tabIndex={0} role="region" aria-label={`${r.name} expression and rate limit`}><code>{r.expression}</code>{r.rateLimit && <p><code>{r.rateLimit}</code></p>}</div>])} />
       </Panel>
       <Panel id="mt-configuration" title="Configured network" subtitle={`Current snapshot collected ${mtDate(meta.configurationAt, tz)}; not the configuration throughout the reporting period`}>
         <RouteTopology routes={data.routes} tunnels={data.tunnels} />

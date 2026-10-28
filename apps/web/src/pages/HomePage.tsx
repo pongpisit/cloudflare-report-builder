@@ -17,6 +17,7 @@ interface Props {
   error?: string;
   userEmail?: string | null;
   onOpenSchedules: () => void;
+  onOpenCustomDashboard: () => void;
 }
 
 const REQUIRED_PERMISSIONS: { label: string; note?: string; required: boolean }[] = [
@@ -68,7 +69,7 @@ const MT_PERMISSIONS = [
   { label: "Account · Account Settings · Read", required: false, note: "Account display name" },
 ];
 
-export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSchedules }: Props) {
+export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSchedules, onOpenCustomDashboard }: Props) {
   const [product, setProduct]             = useState<"appsec" | "zero-trust" | "magic-transit">("appsec");
   const [token, setToken]                 = useState("");
   const [accountId, setAccountId]         = useState("");
@@ -288,6 +289,10 @@ export default function HomePage({ onSubmit, loading, error, userEmail, onOpenSc
                   {p === "appsec" ? "App Security" : p === "magic-transit" ? "Magic Transit" : "Cloudflare One"}
                 </button>
               ))}
+              <button type="button" onClick={onOpenCustomDashboard} disabled={loading}
+                style={{ padding: "15px 24px 13px", fontSize: 11, letterSpacing: "0.09375rem", textTransform: "uppercase", border: "1px solid #c4c4c4", color: "#5d5e65", background: "transparent", cursor: "pointer" }}>
+                Custom Dashboard
+              </button>
             </div>
           </div>
 

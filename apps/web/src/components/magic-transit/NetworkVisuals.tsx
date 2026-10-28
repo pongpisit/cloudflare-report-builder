@@ -13,7 +13,7 @@ export function HealthHeatmap({ health, tzOffset, timestamps }: { health: MtHeal
   const cells = new Map(health.map(p => [`${p.tunnel}|${p.timestamp}`, p]));
   if (!health.length) return <p className="mt-empty">Tunnel probe measurements are unavailable for this period.</p>;
   // Pagination keeps every tunnel available without creating an unprintable single giant chart.
-  return <div>{Array.from({ length: Math.ceil(tunnels.length / 12) }, (_, page) => {
+  const pages = Array.from({ length: Math.ceil(tunnels.length / 12) }, (_, page) => {
     const names = tunnels.slice(page * 12, page * 12 + 12), left = 210, width = 750 / times.length;
     return <svg key={page} viewBox={`0 0 990 ${names.length * 30 + 60}`} className="mt-svg" role="img" aria-label="Tunnel probe success heatmap">
       {names.map((name, row) => <g key={name}>
@@ -26,13 +26,14 @@ export function HealthHeatmap({ health, tzOffset, timestamps }: { health: MtHeal
       <text x={left} y={names.length * 30 + 35} fontSize="10" fill="#64748b">{mtDate(times[0], tzOffset)}</text>
       <text x="960" y={names.length * 30 + 35} textAnchor="end" fontSize="10" fill="#64748b">{mtDate(times[times.length - 1], tzOffset)}</text>
     </svg>;
-  })}<p className="mt-caption">Teal ≥99% · light green ≥80% · amber ≥40% · red &lt;40% · gray: no samples. These are display bands for probe success, not routing-state thresholds.</p></div>;
+  });
+  return <div>{pages[0]}{pages.length > 1 && <details className="mt-visual-evidence"><summary>More tunnel heatmaps · {tunnels.length - 12} tunnels</summary><div className="mt-visual-scroll">{pages.slice(1)}</div></details>}<p className="mt-caption">Teal ≥99% · light green ≥80% · amber ≥40% · red &lt;40% · gray: no samples. These are display bands for probe success, not routing-state thresholds.</p></div>;
 }
 
 export function AttackTimeline({ attacks, start, end, tzOffset }: { attacks: MtAttack[]; start: string; end: string; tzOffset: number }) {
   const a = Date.parse(start), b = Date.parse(end), duration = Math.max(1, b - a);
   if (!attacks.length) return <p className="mt-empty">No attack events returned. Check the data-availability notes if attack analytics could not be queried.</p>;
-  const top = [...attacks].sort((x, y) => (y.droppedBits ?? -1) - (x.droppedBits ?? -1)).slice(0, 20);
+  const top = [...attacks].sort((x, y) => (y.droppedBits ?? -1) - (x.droppedBits ?? -1)).slice(0, 8);
   return <><svg viewBox={`0 0 990 ${top.length * 30 + 65}`} className="mt-svg" role="img" aria-label="Attack timeline clipped to the report period">
     {top.map((attack, i) => { const x = 240 + Math.max(0, Date.parse(attack.start) - a) / duration * 700;
       const right = 240 + Math.min(duration, (attack.end ? Date.parse(attack.end) : b) - a) / duration * 700;
@@ -44,7 +45,7 @@ export function AttackTimeline({ attacks, start, end, tzOffset }: { attacks: MtA
     })}
     <text x="240" y={top.length * 30 + 35} fontSize="10" fill="#64748b">{mtDate(start, tzOffset)}</text>
     <text x="940" y={top.length * 30 + 35} textAnchor="end" fontSize="10" fill="#64748b">{mtDate(end, tzOffset)}</text>
-  </svg><p className="mt-caption">Up to 20 events ranked by lifetime dropped volume. Timeline bars are clipped to the selected period; red marks ongoing events.</p></>;
+  </svg><p className="mt-caption">Up to 8 events ranked by lifetime dropped volume; all returned events remain in the evidence table. Timeline bars are clipped to the selected period; red marks ongoing events.</p></>;
 }
 
 export function ProtocolPortMatrix({ data }: { data: MagicTransitData["protocolPorts"] }) {
@@ -63,7 +64,7 @@ export function ProtocolPortMatrix({ data }: { data: MagicTransitData["protocolP
 
 /** Deterministic SVG relationship graph: no invented geographical or traffic paths. */
 export function RouteTopology({ routes, tunnels }: Pick<MagicTransitData, "routes" | "tunnels">) {
-  const shown = routes.slice(0, 18);
+  const shown = routes.slice(0, 8);
   if (!shown.length) return <p className="mt-empty">No static routes available to visualize.</p>;
   return <><svg className="mt-svg" viewBox={`0 0 990 ${shown.length * 54 + 65}`} role="img" aria-label="Configured prefix, route and tunnel relationships">
     {["DESTINATION PREFIX", "STATIC NEXT HOP", "MATCHED TUNNEL"].map((label, i) => <text key={label} x={20 + i * 330} y="20" fontSize="10" letterSpacing="1.5" fill="#6b8191">{label}</text>)}
@@ -76,5 +77,5 @@ export function RouteTopology({ routes, tunnels }: Pick<MagicTransitData, "route
         {[route.prefix, `${route.nextHop} · priority ${route.priority}`, tunnel ? `${tunnel.type} · ${tunnel.name}` : "Tunnel relationship unavailable"].map((label, j) => <g key={j}><rect x={20 + j * 330} y={y} width="250" height="32" rx="6" fill={j === 2 && tunnel ? "#e5f7f4" : "#f0f5f8"} /><text x={30 + j * 330} y={y + 21} fontSize="11" fill="#264c67">{label.slice(0, 36)}<title>{label}</title></text></g>)}
       </g>;
     })}
-  </svg><p className="mt-caption">Up to 18 configured routes. Tunnel links require an exact endpoint/interface match; unresolved relationships are left disconnected.</p></>;
+  </svg><p className="mt-caption">Up to 8 configured routes; all returned routes remain in the evidence table. Tunnel links require an exact endpoint/interface match; unresolved relationships are left disconnected.</p></>;
 }

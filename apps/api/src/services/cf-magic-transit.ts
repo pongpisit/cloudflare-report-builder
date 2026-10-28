@@ -170,6 +170,25 @@ export async function generateMagicTransitData(input: MtInput): Promise<MagicTra
   const byTime = new Map<string, { bps: number; pps: number }>();
   for (const p of traffic) { const v = byTime.get(p.timestamp) ?? { bps: 0, pps: 0 }; v.bps += p.bps; v.pps += p.pps; byTime.set(p.timestamp, v); }
 
+  // Query DDoS-specific joint dimensions, never relabel all-traffic IP rankings as attackers.
+  // These high-priority queries run before the broader traffic fingerprint consumes the budget.
+  const attackFilter = { direction: "ingress", outcome: "drop" };
+  const [attackSourceRows, attackCountryRows, attackTargetRows] = await Promise.all([
+    metric("attackSources", DDOS, ["ipSourceAddress", "sourceCountry"], attackFilter),
+    metric("attackSourceCountries", DDOS, ["sourceCountry"], attackFilter),
+    metric("attackTargets", DDOS, ["ipDestinationAddress", "destinationPort", "ipProtocolName"], attackFilter),
+  ]);
+  const attackRankings: NonNullable<MagicTransitData["attackRankings"]> = {
+    sources: attackSourceRows === null ? null : ranks(attackSourceRows, ["ipSourceAddress", "sourceCountry"]).slice(0, 25).map(r => {
+      const [ip, country] = r.name.split(" · "); return { ip, country, bits: r.bits, packets: r.packets };
+    }),
+    sourceCountries: attackCountryRows === null ? null : ranks(attackCountryRows, ["sourceCountry"]).slice(0, 25),
+    targets: attackTargetRows === null ? null : ranks(attackTargetRows, ["ipDestinationAddress", "destinationPort", "ipProtocolName"]).slice(0, 25).map(r => {
+      const [ip, port, protocol] = r.name.split(" · ");
+      return { ip, port: /^\d+$/.test(port) ? Number(port) : null, protocol, application: null, bits: r.bits, packets: r.packets };
+    }),
+  };
+
   const rankings: Record<string, MtRank[]> = {};
   const rankDimensions: Record<string, string[]> = {
     sourceCountries: ["sourceCountry"], processingCountries: ["coloCountry"], sourceAsns: ["sourceAsn", "sourceAsnName"],
@@ -282,10 +301,11 @@ export async function generateMagicTransitData(input: MtInput): Promise<MagicTra
   protections.sort((a, b) => a.name.localeCompare(b.name));
   notes.push("Rankings show up to 25 categories, and the protocol-port matrix up to 80 measured pairs; these are not full-population distributions.");
   notes.push("Attack overlap selection scans retained event start times. Events that started before event retention cannot be reconstructed.");
+  notes.push("Attack source/target rankings show up to 25 categories of sampled DDoS-mitigated ingress traffic within the selected window, not attack-event lifetime totals. Source IPs are observed packet addresses, not attribution. Application names require explicit mappings and are not inferred from ports.");
   return {
     meta: { accountId: input.accountId, accountName: str(obj(account).name) || "Magic Transit account", generatedAt: new Date().toISOString(), configurationAt: new Date().toISOString(), since: range.since, until: range.until, sinceTs: range.sinceTs, untilTs: range.untilTs, days: range.days, periodLabel: range.periodLabel ?? `${range.days}-Day`, tzOffset: input.tzOffset, bucketSeconds: step },
     summary: { traffic: selectedVolume(totals), dropped: selectedVolume(totals, "drop"), passed: selectedVolume(totals, "pass"), previousTraffic: selectedVolume(previous), previousDropped: selectedVolume(previous, "drop"), peakBps: series === null ? null : Math.max(0, ...[...byTime.values()].map(p => p.bps)), peakPps: series === null ? null : Math.max(0, ...[...byTime.values()].map(p => p.pps)), attackCount: attackRows === null ? null : attacks.length, probeSuccessPct: healthRows === null || !checks ? null : ok / checks * 100 },
-    traffic, outcomes: ranks(totals ?? [], ["outcome"]), mitigationSystems: ranks(systems ?? [], ["mitigationSystem"]), rankings, protocolPorts, attacks, tunnels, tunnelTraffic, health,
+    traffic, outcomes: ranks(totals ?? [], ["outcome"]), mitigationSystems: ranks(systems ?? [], ["mitigationSystem"]), rankings, protocolPorts, attacks, attackRankings, tunnels, tunnelTraffic, health,
     routes: arr(obj(routesResult).routes).map(r => ({ id: str(r.id), prefix: str(r.prefix), nextHop: str(r.nexthop), priority: num(r.priority) })),
     prefixes: arr(prefixesResult).map(r => ({ id: str(r.id), cidr: str(r.cidr), asn: typeof r.asn === "number" ? r.asn : null, advertised: typeof r.advertised === "boolean" ? r.advertised : null, rpki: str(r.rpki_validation_state) })),
     rules, ruleActivity: ranks(ruleRows ?? [], ["ruleId"]), protections, capabilities, errors, notes,

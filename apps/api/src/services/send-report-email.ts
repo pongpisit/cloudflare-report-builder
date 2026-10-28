@@ -30,7 +30,7 @@ export interface SendReportEmailParams {
   attachments?: {
     filename: string;
     type: string;
-    content: string;
+    content: string | Uint8Array;
   }[];
 }
 

@@ -28,6 +28,9 @@ import { handleFetchZeroTrust } from "./routes/fetch-zerotrust";
 import { handleZTSummary } from "./routes/ai-zt-summary";
 import { handleFetchMagicTransit } from "./routes/fetch-magic-transit";
 import { handleMtSummary } from "./routes/ai-magic-transit-summary";
+import { handleFetchCustomDashboard } from "./routes/fetch-custom-dashboard";
+import { handleListSavedDashboards } from "./routes/list-saved-dashboards";
+import { bodyLimit } from "hono/body-limit";
 import {
   handleListSchedules,
   handleCreateSchedule,
@@ -72,6 +75,16 @@ app.use("*", async (c, next) => {
     maxAge: 86400,
   })(c, next);
 });
+
+// ─── Caller gate (fail-closed) ────────────────────────────────────────────────
+// SECURITY: every /api/* route requires a verified caller before its handler
+// runs — a signature-verified Cloudflare Access JWT (when CF_ACCESS_TEAM_DOMAIN
+// + CF_ACCESS_AUD are configured) or a timing-safe Bearer MANAGE_SECRET. When
+// neither gate is configured the API fails closed with 503; anonymous access
+// is never permitted, so security no longer depends solely on an edge claim.
+// /health stays open for liveness probes (it is not under /api/*).
+import { requireCaller } from "./middleware/auth";
+app.use("/api/*", requireCaller);
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 // Only applied to expensive /api/appsec and /api/summary routes.
@@ -157,6 +170,7 @@ function emailFromJwt(token: string | null): string | null {
 
 // Lightweight zone list — no rate limit
 app.post("/api/zones", handleListZones);
+app.post("/api/custom-dashboard/dashboards", (c, next) => applyRateLimit(c, next), bodyLimit({ maxSize: 16 * 1024 }), handleListSavedDashboards);
 
 // Expensive routes — rate limited
 app.post("/api/appsec", (c, next) => applyRateLimit(c, next), handleFetchAppsec);
@@ -172,6 +186,7 @@ app.post("/api/zerotrust",  (c, next) => applyRateLimit(c, next), handleFetchZer
 app.post("/api/zt-summary", (c, next) => applyRateLimit(c, next), handleZTSummary);
 app.post("/api/magic-transit", (c, next) => applyRateLimit(c, next), handleFetchMagicTransit);
 app.post("/api/mt-summary", (c, next) => applyRateLimit(c, next), handleMtSummary);
+app.post("/api/custom-dashboard", (c, next) => applyRateLimit(c, next), handleFetchCustomDashboard);
 
 // Remediation register — lifecycle tracking of Zero Trust findings (D1)
 app.get  ("/api/remediation",     handleGetRemediation);

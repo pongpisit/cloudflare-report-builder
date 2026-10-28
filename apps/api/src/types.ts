@@ -17,6 +17,11 @@ export interface Env {
   CF_ACCOUNT_ID: string;
   /** Sender address for scheduled emails — domain must be onboarded to Email Sending */
   EMAIL_FROM: string;
+  /** Operator-owned Browser Run credentials, separate from customer analytics. */
+  PDF_API_TOKEN?: string;
+  PDF_ACCOUNT_ID?: string;
+  /** Browser Rendering binding for PDFs without a separate API token. */
+  BROWSER?: Fetcher;
   /** Optional: Cloudflare Access team domain (e.g. "myteam.cloudflareaccess.com").
    *  When set together with CF_ACCESS_AUD, /api/* requires a signature-verified
    *  Cloudflare Access JWT (Cf-Access-Jwt-Assertion header or __CF_Authorization cookie). */
@@ -32,7 +37,7 @@ export interface Env {
 // ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly";
-export type ScheduleReportType = "appsec" | "zero-trust" | "magic-transit";
+export type ScheduleReportType = "appsec" | "zero-trust" | "magic-transit" | "custom-dashboard";
 // "rolling" = fixed N-day window ending now (existing behavior).
 // "calendar_month" = the previous full calendar month (28-31 days,
 // whichever the month actually has) — see lastCalendarMonth() in
@@ -74,6 +79,7 @@ export interface ScheduleRow {
   client_logo: string | null;    // per-schedule branding: base64 data URI for the report cover
   api_token: string | null;      // per-schedule customer token (write-only via API)
   account_id: string | null;     // per-schedule customer account (falls back to backend)
+  dashboard_template?: string | null;
 }
 
 /** Schedule as returned to the dashboard (recipients parsed, booleans coerced) */
@@ -116,6 +122,7 @@ export interface ScheduleConfig {
   apiTokenHint: string | null;
   /** Per-schedule customer account ID (null = use the backend account). */
   accountId: string | null;
+  dashboardTemplate?: import("../../../shared/custom-dashboard-template").DashboardTemplate | null;
 }
 
 export interface SendHistoryRow {

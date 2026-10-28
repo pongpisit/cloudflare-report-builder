@@ -7,12 +7,16 @@ AI-written executive summary, charts, and prioritized recommendations. Built
 entirely as a Cloudflare Worker + static frontend: no external servers, no
 database to manage beyond Cloudflare's own D1/R2.
 
+Also includes a **Custom Dashboard** mode with API-token query templates,
+scheduled PDF/HTML delivery and local snapshot imports.
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/pongpisit/cloudflare-report-builder)
 
 > Built for Cloudflare partners, SEs, and customers who want a Proof-of-Concept
 > or recurring security assessment report generated from *real* Cloudflare
-> data — not a mock-up. Every metric in every report traces back to a live
-> GraphQL Analytics, REST, or analytics API call.
+> data — not a mock-up. Live-data reports trace their measurements to Cloudflare
+> GraphQL Analytics, REST, or analytics API calls. Imported Custom Dashboard
+> reports explicitly identify their point-in-time data source.
 
 **At a glance:** ~$5/month to run (the Workers Paid subscription — see
 [Cost](#cost)), under a cent of marginal cost per report, ~30 seconds to
@@ -23,6 +27,7 @@ generate a report, and no infrastructure to operate.
 ## Table of contents
 
 - [What it does](#what-it-does)
+- [Custom Dashboard reports](CUSTOM_DASHBOARD_REPORTS.md) — API tokens, templates, scheduling and PDF/HTML export
 - [What you need](#what-you-need) — prerequisites, and why Workers Paid is required
 - [Components](#components) — what actually gets deployed
 - [Cost](#cost) — measured usage against current Cloudflare pricing
@@ -74,7 +79,12 @@ generate:
   evidence. Probe counts are summed and routing-state means are sample-weighted;
   bandwidth uses returned bits divided by observed source-bucket duration.
   Missing intervals stay unavailable, and ingress/egress stay separate.
-- An **AI executive summary** (Workers AI) for all three report types, with
+- **Custom Dashboard report** (per zone) — configure reusable API-token query
+  templates for traffic/security widgets; preview fresh analytics or schedule
+  automatic PDF + HTML email delivery. Also imports GraphQL responses, HAR response
+  bodies and versioned JSON snapshots locally for browser PDF/offline HTML export.
+  See [supported inputs and integration boundaries](CUSTOM_DASHBOARD_REPORTS.md).
+- An **AI executive summary** (Workers AI) for the three live-data report types, with
   distinct wording for a "Proof-of-Concept" pitch vs. a neutral recurring
   "Assessment" report.
 - **Finding lifecycle tracking** (D1-backed) — remediation register, CASB
@@ -82,12 +92,14 @@ generate:
   and occurrence count across report runs, and auto-resolve when the
   underlying condition clears.
 - Optional **scheduled email delivery** (daily/weekly/monthly, or the exact
-  previous calendar month) of any report type via Cloudflare Email
-  Sending, with a full run history.
-- An **audit archive** of every generated report (R2), listable and
+  previous calendar month) via Cloudflare Email Sending, with a full run history.
+  Custom Dashboard schedules include automatically rendered PDFs and HTML;
+  they use a Browser Rendering binding for PDF generation (optional REST-token fallback).
+- An **audit archive** for generated live-data reports (R2), listable and
   re-viewable later.
 
-**Production reports use live data.** See
+**AppSec, Cloudflare One and Magic Transit reports use live data.** Custom Dashboard
+reports use fresh API analytics or explicitly imported point-in-time snapshots. See
 [Data sources and honesty guarantees](#data-sources-and-honesty-guarantees).
 
 ### Example reports
@@ -544,6 +556,15 @@ concurrent requests. Rankings are limited to returned top categories; peaks
 are bucket averages. Attack volumes cover event lifetimes, not just the report
 period. Probe success is not SLA uptime, and configuration is a current snapshot.
 
+The report prioritizes **top DDoS source IPs/countries and targeted IPs/ports**,
+ranked by sampled, selected-period mitigated bytes and packets. These rankings
+use DDoS-specific joint dimensions, not general traffic totals or event-lifetime
+volumes. Destination applications require explicit mappings and are not inferred
+from ports. Older archived reports require regeneration to include these fields.
+Evidence lists preview six rows and expand on demand; ranked charts show six
+categories. Ranked and inventory tables retain every returned row in offline
+HTML and print; detailed hourly/daily tunnel evidence stays excluded from print.
+
 Scheduling uses the same report template, customer credentials, branding and
 timezone-aware complete periods as on-demand generation. Apply
 `migrations/0014_magic_transit_report.sql` before creating Magic Transit
@@ -564,13 +585,14 @@ schedule fields and send history.
   out) or stored in D1 via the Settings dashboard (masked in every API
   response — only a `••••1234`-style hint is ever returned, never the full
   value).
-- **Unauthenticated by design, protect it yourself**: `/api/schedules/*` and
-  `/api/settings/*` have no built-in auth check — they're meant to sit behind
-  [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/)
-  (or an equivalent) in front of the Worker. `/api/me` reads the
-  `Cf-Access-Authenticated-User-Email` header / `CF_Authorization` JWT cookie
-  if Access is configured, purely for attribution in the audit archive — it
-  is **not** an authorization check.
+- **API caller authentication**: all Worker `/api/*` routes require a verified
+  caller. Set `CF_ACCESS_TEAM_DOMAIN` (hostname only) and `CF_ACCESS_AUD` for
+  [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)
+  JWT signature/issuer/audience/expiry verification, or set the `MANAGE_SECRET`
+  Worker secret and supply `Authorization: Bearer …` from API clients. Missing
+  configuration returns 503; missing/invalid credentials return 401. `/health`
+  remains available for liveness checks. The Pages proxy forwards the Access
+  assertion/cookie to the Worker; the signed assertion authorizes the API call.
 - **Access session expiry is handled gracefully**: a `fetch()` redirected to
   the Access login page can never complete the login (the login page is
   cross-origin and sends no CORS headers — the browser blocks it, which

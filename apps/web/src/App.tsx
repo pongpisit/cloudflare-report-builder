@@ -3,13 +3,15 @@ import HomePage from "./pages/HomePage";
 import ReportPage from "./pages/ReportPage";
 import ZeroTrustReportPage from "./pages/ZeroTrustReportPage";
 import MagicTransitReportPage from "./pages/MagicTransitReportPage";
+import CustomDashboardPage from "./pages/CustomDashboardPage";
 import type { MagicTransitData } from "../../../shared/magic-transit";
+import type { DashboardSnapshot } from "../../../shared/custom-dashboard";
 import SchedulesPage from "./pages/SchedulesPage";
 import { fetchAppsecData, fetchZeroTrustData, fetchMagicTransitData, fetchUserEmail } from "./services/api";
 import { ACCESS_EXPIRED_EVENT, reauthenticateNow } from "./services/access-reauth";
 import type { AppSecData, ZeroTrustData, ReportInput } from "./types";
 
-type Phase = "home" | "loading" | "report" | "schedules";
+type Phase = "home" | "loading" | "report" | "schedules" | "custom-dashboard";
 
 /**
  * EMBEDDED REPORT — set by scheduled-email attachments: the single-chunk app
@@ -19,7 +21,7 @@ type Phase = "home" | "loading" | "report" | "schedules";
  * network access: the recipient's browser does the rendering at open time.
  */
 export interface EmbeddedReport {
-  kind: "appsec" | "zero-trust" | "magic-transit";
+  kind: "appsec" | "zero-trust" | "magic-transit" | "custom-dashboard";
   data: unknown;
   input: ReportInput;
   aiSummary?: string;
@@ -96,6 +98,13 @@ export default function App() {
     setPhase("home");
   }
 
+  if (EMBEDDED_REPORT?.kind === "custom-dashboard") {
+    return <CustomDashboardPage onBack={handleReset} initialData={EMBEDDED_REPORT.data as DashboardSnapshot} embedded />;
+  }
+  if (phase === "custom-dashboard") {
+    return <><CustomDashboardPage onBack={handleReset} onOpenSchedules={() => setPhase("schedules")} />{accessExpired && <AccessExpiredOverlay />}</>;
+  }
+
   if (phase === "schedules") {
     return (
       <>
@@ -135,6 +144,7 @@ export default function App() {
         error={error}
         userEmail={userEmail}
         onOpenSchedules={() => setPhase("schedules")}
+        onOpenCustomDashboard={() => setPhase("custom-dashboard")}
       />
       {accessExpired && <AccessExpiredOverlay />}
     </>

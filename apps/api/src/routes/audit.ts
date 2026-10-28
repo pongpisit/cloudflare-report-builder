@@ -92,7 +92,7 @@ export async function handleAuditList(c: Context<{ Bindings: Env }>) {
 }
 
 // ── GET /api/audit/:key ───────────────────────────────────────────────────────
-// Returns the raw HTML for a saved report.
+// Returns the saved HTML or a scheduled dashboard's already-rendered PDF.
 
 export async function handleAuditGet(c: Context<{ Bindings: Env }>) {
   const bucket = c.env.AUDIT_BUCKET;
@@ -110,7 +110,7 @@ export async function handleAuditGet(c: Context<{ Bindings: Env }>) {
 
   return new Response(obj.body, {
     headers: {
-      "Content-Type":        "text/html; charset=utf-8",
+      "Content-Type":        key.endsWith(".pdf") && obj.httpMetadata?.contentType === "application/pdf" ? "application/pdf" : "text/html; charset=utf-8",
       "Content-Disposition": `inline; filename="${key}"`,
       "Cache-Control":       "private, max-age=3600",
     },

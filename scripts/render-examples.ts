@@ -11,7 +11,7 @@ await mkdir(previews, { recursive: true });
 const reports = [
   { kind: "appsec" as const, title: "AppSec", data: appsecExample(), heading: "Application Security Overview", section: ".report-section", summary: "Demonstration only. This narrative and every metric in this report are synthetic, created to illustrate an application-security assessment. No Cloudflare API or AI service was called.\n\nThe invented traffic includes request trends, geographic distributions, WAF outcomes, bot activity, caching, TLS and DNS. These values are examples, not evidence about any organization.\n\nUse the charts, geographic view and evidence tables to explore the report layout. Any computed scores or recommendations apply only to this fictional dataset." },
   { kind: "zero-trust" as const, title: "Zero Trust / Cloudflare One", data: zeroTrustExample(), heading: "Cloudflare One — Overview", section: ".report-section", summary: "Demonstration only. This narrative and every metric in this report are synthetic, created to illustrate a Zero Trust assessment. No Cloudflare API or AI service was called.\n\nThe fictional account demonstrates Access, Gateway DNS/HTTP/network filtering, devices, tunnels and data security. All identities use example.com addresses, and IP addresses are documentation or private ranges.\n\nExplore the evidence sections to see how a report communicates coverage, activity and configuration. These values are not evidence about any actual deployment." },
-  { kind: "magic-transit" as const, title: "Magic Transit", data: magicTransitExample(), heading: "Tunnel health & throughput", section: "#mt-tunnels", summary: "Demonstration only. This narrative and every metric in this report are synthetic, created to illustrate a Magic Transit assessment. No Cloudflare API or AI service was called.\n\nThe invented scenario shows geographic traffic, packet outcomes, overlapping attack events and a short period of degraded tunnel probes. The hourly summaries conserve the source probe counts.\n\nIngress and egress remain separate, probe success is not SLA uptime, and attack volumes describe event lifetimes. Configuration and identifiers are fictional." },
+  { kind: "magic-transit" as const, title: "Magic Transit", data: magicTransitExample(), heading: "Top attack sources & targets", section: "#mt-attack-priority", summary: "Demonstration only. This narrative and every metric in this report are synthetic, created to illustrate a Magic Transit assessment. No Cloudflare API or AI service was called.\n\nThe invented scenario prioritizes DDoS source IP/country and target IP/port mitigation volumes, alongside geographic traffic, overlapping attack events and a short period of degraded tunnel probes. The hourly summaries conserve the source probe counts.\n\nIngress and egress remain separate, probe success is not SLA uptime, and attack-event volumes describe event lifetimes. Source/target rankings use selected-period volumes; application names are not inferred from ports. Configuration and identifiers are fictional." },
 ];
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined, headless: true });
 try {
@@ -53,7 +53,7 @@ new MutationObserver(labelDemo).observe(document.documentElement, {childList:tru
     await page.waitForTimeout(1800);
     await page.screenshot({ path: resolve(previews, `${report.kind}-cover.png`) });
     const section = report.kind === "magic-transit" ? page.locator(report.section) : page.locator(report.section).filter({ has: page.getByRole("heading", { name: report.heading, exact: true }) }).first();
-    await section.evaluate(element => {
+    for (const target of report.kind === "magic-transit" ? [section, page.locator("#mt-tunnels")] : [section]) await target.evaluate(element => {
       const notice = document.createElement("div");
       notice.textContent = "SYNTHETIC EXAMPLE — fictional data for demonstration only";
       notice.style.cssText = "padding:10px 16px;margin-bottom:16px;background:#fff2cd;color:#563d12;font:600 12px/1.5 system-ui,sans-serif;text-align:center";
@@ -61,6 +61,7 @@ new MutationObserver(labelDemo).observe(document.documentElement, {childList:tru
     });
     await page.addStyleTag({ content: ".mt-toolbar,.sticky.top-0 { visibility:hidden!important; }" });
     await section.screenshot({ path: resolve(previews, `${report.kind}-analytics.png`) });
+    if (report.kind === "magic-transit") await page.locator("#mt-tunnels").screenshot({ path: resolve(previews, "magic-transit-tunnels.png") });
     await page.emulateMedia({ media: "print" });
     const pdf = await page.pdf({ format: "A4", printBackground: true });
     expect(pdf.subarray(0, 4).toString()).toBe("%PDF");

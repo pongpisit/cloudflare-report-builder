@@ -72,7 +72,7 @@ test("one-day tunnel evidence stays compact, expands to 24 hours and is omitted 
   await expect(panel.getByText(/No tunnel throughput measurements returned/)).toBeVisible();
   expect(await panel.locator("details").evaluate(e => (e as HTMLDetailsElement).open)).toBe(false);
   await expect(panel.locator("svg[aria-label='Tunnel probe success heatmap'] rect")).toHaveCount(24);
-  await expect(panel.locator(":scope > .mt-table-wrap tbody tr")).toHaveCount(1);
+  await expect(panel.locator(":scope > .mt-evidence .mt-table-wrap tbody tr")).toHaveCount(1);
   expect((await panel.boundingBox())!.height).toBeLessThan(1000);
   await panel.screenshot({ path: testInfo.outputPath("tunnel-hourly-summary.png") });
   await panel.locator("summary").click();
@@ -100,4 +100,65 @@ test("on-demand Magic Transit requires an account but no zone and dispatches the
   expect(requests).toHaveLength(1);
   expect(requests[0].accountId).toBe(TEST_ACCOUNT);
   expect(requests[0].zoneId).toBeUndefined();
+});
+
+test("attack priorities lead the report and long lists expand offline without losing printable evidence", async ({ page }, testInfo) => {
+  const data = fixture();
+  data.attackRankings!.sources = Array.from({ length: 25 }, (_, i) => ({ ip: `192.0.2.${i + 1}`, country: "US", bits: (25 - i) * 8000000, packets: (25 - i) * 10000 }));
+  data.attackRankings!.targets = Array.from({ length: 25 }, (_, i) => ({ ip: `203.0.113.${i + 1}`, port: 443, protocol: "TCP", application: null, bits: (25 - i) * 8000000, packets: (25 - i) * 10000 }));
+  data.rankings.sourceAsns = Array.from({ length: 25 }, (_, i) => ({ name: `645${String(i).padStart(2, "0")} · Example network`, bits: (25 - i) * 8000000, packets: (25 - i) * 10000 }));
+  data.rankings.protocols = Array.from({ length: 25 }, (_, i) => ({ name: `Example protocol ${i}`, bits: (25 - i) * 8000000, packets: (25 - i) * 10000 }));
+  const attempts = await attachment(page, data), priority = page.locator("#mt-attack-priority");
+  const screenshotStyle = await page.addStyleTag({ content: ".mt-toolbar{visibility:hidden!important}" });
+  await priority.screenshot({ path: testInfo.outputPath("attack-priority-compact.png") });
+  await screenshotStyle.evaluate(el => el.remove());
+  const assessment = page.getByRole("heading", { name: "Executive assessment", exact: true });
+  expect((await priority.boundingBox())!.y).toBeLessThan((await assessment.boundingBox())!.y);
+  expect((await priority.boundingBox())!.height).toBeLessThan(650);
+  const sourceTable = page.getByRole("table", { name: "Top DDoS source IPs", exact: true });
+  const sourceRows = sourceTable.locator("tbody tr");
+  await expect(sourceRows).toHaveCount(25);
+  await expect(sourceRows.nth(5)).toBeVisible();
+  await expect(sourceRows.nth(6)).toBeHidden();
+  await expect(priority.getByRole("columnheader", { name: "Application", exact: true })).toHaveCount(0);
+  const sourceCard = priority.locator(".mt-attack-card").first();
+  const toggle = sourceCard.getByRole("checkbox", { name: "Show all 25 rows", exact: true });
+  await toggle.focus(); await toggle.press("Space");
+  await expect(sourceRows.last()).toBeVisible();
+  expect((await sourceCard.locator(".mt-table-wrap").boundingBox())!.height).toBeLessThanOrEqual(360);
+  await sourceCard.getByRole("checkbox", { name: "Show first 6 rows", exact: true }).press("Space");
+  await expect(sourceRows.last()).toBeHidden();
+
+  const rank = page.locator(".mt-rank").filter({ has: page.getByRole("heading", { name: "Source ASNs", exact: true }) });
+  await expect(rank.getByRole("table")).toBeHidden();
+  expect((await rank.boundingBox())!.height).toBeLessThan(300);
+  const distribution = page.locator(".mt-rank").filter({ has: page.getByRole("heading", { name: "Protocols", exact: true }) });
+  await expect(distribution.getByText("Other returned categories", { exact: true })).toBeVisible();
+  await expect(distribution.locator(".recharts-legend-item")).toHaveCount(6);
+  await page.emulateMedia({ media: "print" });
+  await expect(sourceRows.last()).toBeVisible();
+  await expect(rank.getByRole("table").locator("tbody tr").last()).toBeVisible();
+  await expect(distribution.getByRole("table", { name: "Protocols distribution" }).locator("tbody tr")).toHaveCount(25);
+  await expect(toggle).toBeHidden();
+  await page.emulateMedia({ media: "screen" });
+  const pending = page.waitForEvent("download");
+  await page.getByRole("button", { name: "HTML", exact: true }).click();
+  const snapshot = await readFile((await (await pending).path())!, "utf8");
+  expect(snapshot).not.toMatch(/<script[\s>]/i);
+  await page.setContent(snapshot);
+  const offlineCard = page.locator("#mt-attack-priority .mt-attack-card").first();
+  await offlineCard.getByRole("checkbox", { name: "Show all 25 rows", exact: true }).focus();
+  await offlineCard.getByRole("checkbox", { name: "Show all 25 rows", exact: true }).press("Space");
+  await expect(offlineCard.getByRole("table").locator("tbody tr").last()).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  expect(attempts).toEqual([]);
+});
+
+test("older reports do not label general traffic rankings as attack sources", async ({ page }) => {
+  const data = fixture(); delete data.attackRankings;
+  await attachment(page, data);
+  const priority = page.locator("#mt-attack-priority");
+  await expect(priority.getByText(/This older report does not include attack-specific rankings/)).toHaveCount(3);
+  await expect(priority.getByRole("table")).toHaveCount(0);
 });

@@ -1,6 +1,6 @@
 export const TEST_TOKEN = "test-token-for-offline-fixture-only";
 export const TEST_ACCOUNT = "00000000000000000000000000000000";
-export function mockUpstream(options: { failHealth?: boolean; failRules?: boolean; failMain?: boolean; omitAttackMeasurements?: boolean; maxDuration?: number; maxPageSize?: number } = {}) {
+export function mockUpstream(options: { failHealth?: boolean; failRules?: boolean; failMain?: boolean; failAttackRankings?: boolean; omitAttackMeasurements?: boolean; maxDuration?: number; maxPageSize?: number } = {}) {
   let active = 0, maximum = 0;
   const calls: { url: string; query: string; variables: Record<string, unknown> }[] = [];
   const send = (account: unknown) => new Response(JSON.stringify({ data: { viewer: { accounts: [account] } }, errors: null }), { headers: { "content-type": "application/json" } });
@@ -20,6 +20,14 @@ export function mockUpstream(options: { failHealth?: boolean; failRules?: boolea
         if ((options.failMain && query.includes("rows: magicTransitNetworkAnalytics")) || (options.failHealth && query.includes("rows: magicTransitTunnelHealthChecks"))) return new Response(JSON.stringify({ data: null, errors: [{ message: "Synthetic dataset unavailable" }] }));
         if (query.includes("rows: dosdAttackAnalyticsGroups")) return send({ rows: [{ attackId: "example-overlap", startDatetime: new Date(Date.now() - 2 * 3600000).toISOString(), endDatetime: null, attackVector: "SYN flood", ipProtocolName: "TCP", destinationIp: "203.0.113.10", ...(options.omitAttackMeasurements ? {} : { destinationPort: 443, bits: 100000, packets: 100, droppedBits: 80000, droppedPackets: 80 }) }] });
         const dims = /dimensions\s*\{([^}]+)\}/.exec(query)?.[1].trim().split(/\s+/) ?? [];
+        if (query.includes("rows: dosdNetworkAnalyticsAdaptiveGroups") && dims.some(d => ["ipSourceAddress", "sourceCountry", "ipDestinationAddress"].includes(d))) {
+          if (options.failAttackRankings) return new Response(JSON.stringify({ data: null, errors: [{ message: "Synthetic DDoS rankings unavailable" }] }));
+          const values = [
+            { ipSourceAddress: "192.0.2.9", sourceCountry: "JP", ipDestinationAddress: "203.0.113.10", destinationPort: 53, ipProtocolName: "UDP", bits: 240000, packets: 240 },
+            { ipSourceAddress: "192.0.2.9", sourceCountry: "US", ipDestinationAddress: "203.0.113.10", destinationPort: 443, ipProtocolName: "TCP", bits: 640000, packets: 640 },
+          ];
+          return send({ rows: values.map(v => ({ dimensions: Object.fromEntries(dims.map(d => [d, v[d as keyof typeof v]])), sum: { bits: v.bits, packets: v.packets } })) });
+        }
         const filter = variables.filter ?? {};
         const timestamp = new Date(filter.datetime_geq ?? Date.now() - 3600000).toISOString();
         const values: Record<string, string | number> = { sourceCountry: "US", coloCountry: "SG", sourceAsn: 64500, sourceAsnName: "Example ASN", ipSourceAddress: "192.0.2.1", ipDestinationAddress: "203.0.113.10", ipDestinationSubnet: "203.0.113.0/24", destinationPort: 443, ipProtocolName: "TCP", tcpFlagsString: "SYN", ipTotalLengthBuckets: "64–128", coloCode: "SIN", tunnelName: "Example tunnel", direction: "ingress", ruleId: "rule-1", attackVector: "SYN flood", protocolState: "new", dnsQueryType: "A", programName: "Example program", mitigationSystem: "dosd", outcome: "pass" };

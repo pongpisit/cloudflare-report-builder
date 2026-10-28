@@ -15,7 +15,7 @@ works offline. Use the report's PDF button to print or save a PDF.
 |---|---|---|
 | AppSec | [appsec.html](appsec.html) | Traffic, geography, WAF/bots, caching, TLS, DNS and API traffic |
 | Zero Trust / Cloudflare One | [zero-trust.html](zero-trust.html) | Access, Gateway, devices, tunnels and data-security activity |
-| Magic Transit | [magic-transit.html](magic-transit.html) | Three.js globe, network traffic, attack events, hourly tunnel health/throughput and configuration |
+| Magic Transit | [magic-transit.html](magic-transit.html) | Prioritized DDoS source IP/country and target IP/port volumes, Three.js globe, attack events, compact tunnel summaries and configuration |
 
 Live actions and network requests are disabled in these examples. Identifiers
 are clearly fictional, identities and domains use `example.com`, and IPs use
@@ -28,7 +28,8 @@ zero traffic.
 ### Magic Transit
 
 ![Synthetic Magic Transit cover](previews/magic-transit-cover.png)
-![Synthetic Magic Transit hourly tunnel summary](previews/magic-transit-analytics.png)
+![Synthetic Magic Transit top attack sources and targets](previews/magic-transit-analytics.png)
+![Synthetic Magic Transit hourly tunnel summary](previews/magic-transit-tunnels.png)
 
 ### AppSec
 

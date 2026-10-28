@@ -14,6 +14,21 @@ const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 import { noteAccessRedirect, clearAccessReauthFlag } from "./access-reauth";
 import type { MagicTransitData } from "../../../../shared/magic-transit";
+import type { DashboardSnapshot } from "../../../../shared/custom-dashboard";
+import type { DashboardTemplate } from "../../../../shared/custom-dashboard-template";
+import type { SavedDashboard } from "../../../../shared/saved-dashboard";
+
+export interface SavedDashboardCredentials { apiToken?: string | null; accountId?: string; scheduleId?: string }
+export async function fetchSavedDashboards(input: SavedDashboardCredentials & { scope: "account" | "zone"; zoneId?: string }): Promise<SavedDashboard[]> {
+  const result = await post<{ ok: boolean; dashboards: SavedDashboard[] }>("/api/custom-dashboard/dashboards", input);
+  if (!result.ok || !Array.isArray(result.dashboards)) throw new Error("The API did not return a saved-dashboard list.");
+  return result.dashboards;
+}
+
+export async function fetchCustomDashboard(input: { token: string; accountId: string; zoneId: string; zoneName: string; template: DashboardTemplate; days: number; tzOffset: number; rangeMode: "period"; period: "yesterday" | "last_week" | "last_month" }): Promise<DashboardSnapshot> {
+  const result = await post<{ ok: boolean; dashboard: DashboardSnapshot }>("/api/custom-dashboard", input);
+  return result.dashboard;
+}
 
 export async function fetchMagicTransitData(input: ReportInput): Promise<MagicTransitData> {
   const result = await post<{ ok: boolean; magicTransit: MagicTransitData }>("/api/magic-transit", {

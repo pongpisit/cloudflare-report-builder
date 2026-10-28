@@ -747,7 +747,7 @@ export interface AlertTrackingItem {
 // ─── Scheduled Reports ────────────────────────────────────────────────────────
 
 export type ScheduleFrequency = "daily" | "weekly" | "monthly";
-export type ScheduleReportType = "appsec" | "zero-trust" | "magic-transit";
+export type ScheduleReportType = "appsec" | "zero-trust" | "magic-transit" | "custom-dashboard";
 // "rolling" = fixed N-day window ending now (existing behavior).
 // "calendar_month" = the previous full calendar month (28-31 days,
 // whichever the month actually has) — fixes monthly-frequency schedules
@@ -759,6 +759,7 @@ export type ReportRangeMode = "rolling" | "calendar_month" | "custom" | "period"
 export type ReportPeriod = "yesterday" | "last_week" | "last_month";
 
 export interface ScheduleConfig {
+  dashboardTemplate?: import("../../../shared/custom-dashboard-template").DashboardTemplate | null;
   id: string;
   name: string;
   reportType: ScheduleReportType;
@@ -801,6 +802,7 @@ export interface ScheduleConfig {
 
 /** Payload for create/update — everything the dashboard configures. */
 export interface ScheduleInput {
+  dashboardTemplate?: import("../../../shared/custom-dashboard-template").DashboardTemplate | null;
   name: string;
   reportType: ScheduleReportType;
   zoneId: string | null;

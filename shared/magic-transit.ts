@@ -1,6 +1,12 @@
 /** Public, credential-free contract shared by the Worker and report template. */
 export interface MtVolume { bits: number; packets: number }
 export interface MtRank extends MtVolume { name: string }
+export interface MtAttackSource extends MtVolume { ip: string; country: string }
+export interface MtAttackTarget extends MtVolume {
+  ip: string; port: number | null; protocol: string;
+  /** Only an explicit application mapping may populate this; ports are not app identities. */
+  application: string | null;
+}
 export interface MtTrafficPoint extends MtVolume { timestamp: string; outcome: string; bps: number; pps: number }
 export interface MtAttack {
   id: string; start: string; end: string | null; vector: string; protocol: string;
@@ -53,6 +59,12 @@ export interface MagicTransitData {
   rankings: Record<string, MtRank[]>;
   protocolPorts: { protocol: string; port: number; bits: number; packets: number }[];
   attacks: MtAttack[];
+  /** Selected-window, DDoS-mitigated ingress volumes. Optional for older archived reports. */
+  attackRankings?: {
+    sources: MtAttackSource[] | null;
+    sourceCountries: MtRank[] | null;
+    targets: MtAttackTarget[] | null;
+  };
   tunnels: MtTunnel[];
   tunnelTraffic: MtTunnelPoint[];
   health: MtHealthPoint[];

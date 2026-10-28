@@ -19,6 +19,7 @@ import type { Context } from "hono";
 import type { Env, ScheduleRow, ScheduleConfig, ScheduleReportType, ScheduleFrequency, ReportRangeMode } from "../types";
 import { runSchedule } from "../scheduler";
 import { customDateRange } from "../services/cf-graphql";
+import { validateDashboardTemplate, type DashboardTemplate } from "../../../../shared/custom-dashboard-template";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30];
 const MAX_RECIPIENTS = 50; // Cloudflare Email Sending limit (to + cc + bcc)
@@ -68,12 +69,14 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     apiTokenSet: !!row.api_token,
     apiTokenHint: row.api_token ? `••••••••${row.api_token.slice(-4)}` : null,
     accountId: row.account_id ?? null,
+    dashboardTemplate: row.dashboard_template ? validateDashboardTemplate(JSON.parse(row.dashboard_template)) : null,
   };
 }
 
 // ─── Input validation (create + update) ────────────────────────────────────────
 
 interface ValidatedSchedule {
+  dashboardTemplate: DashboardTemplate | null;
   name: string;
   reportType: ScheduleReportType;
   zoneId: string | null;
@@ -111,14 +114,19 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
   if (!name || name.length > 120) return { error: "name is required (max 120 chars)" };
 
   const reportType = b.reportType;
-  if (reportType !== "appsec" && reportType !== "zero-trust" && reportType !== "magic-transit")
-    return { error: "reportType must be 'appsec', 'zero-trust' or 'magic-transit'" };
+  if (reportType !== "appsec" && reportType !== "zero-trust" && reportType !== "magic-transit" && reportType !== "custom-dashboard")
+    return { error: "Unsupported reportType" };
+  let dashboardTemplate: DashboardTemplate | null = null;
+  if (reportType === "custom-dashboard") {
+    try { dashboardTemplate = validateDashboardTemplate(b.dashboardTemplate); }
+    catch (e) { return { error: e instanceof Error ? e.message : "Invalid dashboard template" }; }
+  }
 
   let zoneId: string | null = null;
   let zoneName: string | null = null;
-  if (reportType === "appsec") {
+  if (reportType === "appsec" || reportType === "custom-dashboard") {
     if (typeof b.zoneId !== "string" || !/^[a-f0-9]{32}$/i.test(b.zoneId))
-      return { error: "zoneId (32-char hex) is required for appsec schedules" };
+      return { error: "zoneId (32-char hex) is required for zone-scoped schedules" };
     zoneId = b.zoneId.toLowerCase();
     if (b.zoneName !== undefined && b.zoneName !== null) {
       if (typeof b.zoneName !== "string" || b.zoneName.length > 255)
@@ -273,7 +281,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
       isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
       sinceDate, untilDate, sinceTime, untilTime, monthsAgo,
-      period, clientLogo, apiToken, accountId,
+      period, clientLogo, apiToken, accountId, dashboardTemplate,
     },
   };
 }
@@ -314,8 +322,8 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
         is_poc, client_name, enabled, created_at, updated_at, range_mode,
         since_date, until_date, since_time, until_time, months_ago, period,
-        client_logo, api_token, account_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        client_logo, api_token, account_id, dashboard_template)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
@@ -323,7 +331,7 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
       data.sendHourUtc, data.recipients, data.subject, data.message,
       data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode,
       data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
-      data.clientLogo, data.apiToken ?? null, data.accountId
+      data.clientLogo, data.apiToken ?? null, data.accountId, data.dashboardTemplate ? JSON.stringify(data.dashboardTemplate) : null
     )
     .run();
 
@@ -357,7 +365,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
        enabled = ?, updated_at = ?, range_mode = ?,
        since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?, period = ?,
-       client_logo = ?, api_token = ?, account_id = ?
+       client_logo = ?, api_token = ?, account_id = ?, dashboard_template = ?
      WHERE id = ?`
   )
     .bind(
@@ -366,7 +374,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
       data.enabled, now, data.rangeMode,
       data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
-      data.clientLogo, apiToken, data.accountId, id
+      data.clientLogo, apiToken, data.accountId, data.dashboardTemplate ? JSON.stringify(data.dashboardTemplate) : null, id
     )
     .run();
 

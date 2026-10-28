@@ -84,6 +84,12 @@ async function serialiseReport(): Promise<string> {
   const clone = document.cloneNode(true) as Document;
   clone.querySelectorAll(".print\\:hidden").forEach((el) => el.remove());
   clone.querySelectorAll("script").forEach((el) => el.remove());
+  // Custom measured charts lose ResizeObserver in a script-free snapshot.
+  // Preserve their coordinate system so the SVG can scale to a smaller card.
+  clone.querySelectorAll<SVGSVGElement>(".mt-report svg:not([viewBox])").forEach(svg => {
+    const width = Number(svg.getAttribute("width")), height = Number(svg.getAttribute("height"));
+    if (width > 0 && height > 0) svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  });
   clone.querySelectorAll('link[rel="modulepreload"], link[rel="preload"], link[rel="preconnect"], link[href*="fonts.googleapis.com"]').forEach(el => el.remove());
   await inlineStylesheets(clone);
   const extraStyle = clone.createElement("style");
@@ -92,10 +98,13 @@ async function serialiseReport(): Promise<string> {
     .print\\:hidden { display: none !important; }
     #report-content { max-width: none !important; padding: 0 !important; }
     .cover-screen-preview { border-radius: 0 !important; }
+    .mt-report svg { max-width: 100%; height: auto; }
   `;
   clone.head.appendChild(extraStyle);
   await inlineImages(clone.body as HTMLElement);
-  return "<!DOCTYPE html>\n" + new XMLSerializer().serializeToString(clone.documentElement);
+  // HTML serialization preserves raw CSS text (XML serialization escapes `>`
+  // in child selectors, breaking layout when the snapshot is opened as HTML).
+  return "<!DOCTYPE html>\n" + clone.documentElement.outerHTML;
 }
 
 /**
@@ -106,8 +115,17 @@ export async function captureReportHtml(): Promise<string> {
   return serialiseReport();
 }
 
-export async function saveToHtml(zoneName: string): Promise<void> {
-  const html = await serialiseReport();
+export async function saveToHtml(zoneName: string, dashboard?: import("../../../../shared/custom-dashboard").DashboardSnapshot): Promise<void> {
+  let html: string;
+  if (dashboard) {
+    const [{ embeddedDashboardHtml }, js, css] = await Promise.all([
+      import("../../../../shared/embedded-dashboard-html"),
+      fetch("/static-report/app.js").then(r => { if (!r.ok) throw new Error("Report bundle unavailable"); return r.text(); }),
+      fetch("/static-report/app.css").then(r => { if (!r.ok) throw new Error("Report stylesheet unavailable"); return r.text(); }),
+    ]);
+    if (!js.includes("root") || js.length < 10000) throw new Error("Report bundle unavailable; build static assets first");
+    html = embeddedDashboardHtml(dashboard, js, css);
+  } else html = await serialiseReport();
 
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);

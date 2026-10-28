@@ -6,6 +6,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0",
     "hono": "^4.6.0"
   },
   "devDependencies": {

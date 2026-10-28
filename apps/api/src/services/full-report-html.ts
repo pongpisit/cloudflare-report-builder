@@ -28,7 +28,12 @@ export function renderMtFullReport(data: MagicTransitData, p: FullReportParams):
     { label: "Attack events", value: data.summary.attackCount === null ? "Unavailable" : fmtNum(data.summary.attackCount) },
   ]);
   const tab = (headers: string[], rows: unknown[][]) => table(headers.map(h => ({ h })), rows.map(row => ({ cells: row.map(esc) })));
-  const sections = [section("summary", "Executive assessment", summaryBlock(p.aiSummary)), section("traffic", "Traffic overview", grid + barChart(data.traffic.map(t => ({ date: t.timestamp, value: t.bps })), "#078dad", v => `${fmtNum(v)} bps`), "Reduced fallback rendering: the full interactive bundle was unavailable. Peaks are bucket averages.")];
+  const sources = [...(data.attackRankings?.sources ?? [])].sort((a, b) => b.bits - a.bits);
+  const targets = [...(data.attackRankings?.targets ?? [])].sort((a, b) => b.bits - a.bits);
+  const attackFocus = tab(["Source IP", "Country", "Mitigated bytes", "Packets"], sources.map(r => [r.ip, r.country, bytes(r.bits), fmtNum(r.packets)]))
+    + tab(["Target IP", "Port / protocol", "Mitigated bytes", "Packets"], targets.map(r => [r.ip, `${r.port ?? "Unknown"} / ${r.protocol}`, bytes(r.bits), fmtNum(r.packets)]))
+    + (!sources.length || !targets.length ? "<p>Some attack rankings are empty or unavailable. See collection status; older reports require regeneration.</p>" : "");
+  const sections = [section("attack-priority", "Top attack sources & targets", attackFocus, "Ranked by selected-period DDoS-mitigated ingress volume, not all traffic or event-lifetime totals. Application names require explicit mappings."), section("summary", "Executive assessment", summaryBlock(p.aiSummary)), section("traffic", "Traffic overview", grid + barChart(data.traffic.map(t => ({ date: t.timestamp, value: t.bps })), "#078dad", v => `${fmtNum(v)} bps`), "Reduced fallback rendering: the full interactive bundle was unavailable. Peaks are bucket averages.")];
   sections.push(section("outcomes", "Traffic outcomes", tab(["Outcome", "Packets", "Bytes"], data.outcomes.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)]))));
   sections.push(section("mitigation", "Mitigation systems", tab(["System", "Packets", "Bytes"], data.mitigationSystems.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)]))));
   for (const [key, ranks] of Object.entries(data.rankings)) sections.push(section(key, key, tab(["Category", "Packets", "Bytes"], ranks.map(r => [r.name, fmtNum(r.packets), bytes(r.bits)]))));

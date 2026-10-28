@@ -136,6 +136,8 @@ export function magicTransitExample() {
   data.summary.peakPps = Math.max(...Array.from(new Set(data.traffic.map(p => p.timestamp)), t => sum(data.traffic.filter(p => p.timestamp === t).map(p => p.pps))));
   data.ruleActivity = [{ name: "rule-1", bits: 52000000, packets: 52000 }];
   data.protections = data.protections.map(p => {
+    if (p.name === "Network-layer DDoS") p = { ...p, volume: { bits: 200000000, packets: 200000 } };
+    if (p.name === "Network Firewall") p = { ...p, volume: { bits: 52000000, packets: 52000 } };
     if (!p.volume) return p;
     const volume = p.volume;
     const shares = p.breakdown.map(() => 1 / p.breakdown.length);
