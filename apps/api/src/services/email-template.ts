@@ -9,6 +9,7 @@
 
 import type { AppSecData, ZeroTrustData } from "../types";
 import type { MagicTransitData } from "../../../../shared/magic-transit";
+import { creditLine, type ExecutiveSummary, type Severity } from "./exec-summary";
 
 export function renderMtEmail(data: MagicTransitData, params: ReportEmailParams): RenderedEmail {
   const s = data.summary;
@@ -30,7 +31,7 @@ export function renderMtEmail(data: MagicTransitData, params: ReportEmailParams)
       { title: "Dropped traffic by mitigation system", rows: data.mitigationSystems.map(r => ({ label: r.name, value: `${bytes(r.bits)} · ${fmtNum(r.packets)} packets` })) },
       { title: "Top destination prefixes", rows: (data.rankings.prefixes ?? []).slice(0, 5).map(r => ({ label: r.name, value: bytes(r.bits) })) },
       { title: "Data unavailable", rows: Object.keys(data.errors).map(key => ({ label: key, value: "See attached report" })) }],
-    summaryTextBlock: summaryParagraphs(params.aiSummary),
+    summaryTextBlock: summaryFor(params),
     footerNote: "The attached HTML contains the full visual Magic Transit report. Traffic is estimated from sampled analytics; peak rates are bucket averages and probe success is not SLA uptime. Configuration is a current snapshot.",
   });
 }
@@ -46,6 +47,8 @@ export interface ReportEmailParams {
    *  Most modern email clients render data URIs; blocked ones show alt text. */
   clientLogo?: string;
   aiSummary: string;         // may be "" when Workers AI was unavailable
+  /** Scheduled emails only: five-section executive summary that replaces the single AI block. */
+  execSummary?: ExecutiveSummary;
 }
 
 export interface RenderedEmail {
@@ -142,6 +145,34 @@ function topTableList(list: TopList): string {
 
 function clientLabel(p: ReportEmailParams): string {
   return p.clientName ? `${p.clientName} · ` : "";
+}
+
+const SEVERITY_STYLE: Record<Severity, { label: string; color: string }> = {
+  critical: { label: "Critical", color: "#ba0816" }, high: { label: "High", color: "#d1570f" },
+  medium: { label: "Medium", color: "#8a6d00" }, low: { label: "Low", color: "#5d5e65" }, info: { label: "Note", color: "#5d5e65" },
+};
+
+/** Structured five-section summary: prose written by the models, plus verbatim code-built items. */
+function execSummaryBlock(summary: ExecutiveSummary): { html: string; text: string } {
+  const html = summary.sections.map((section, i) => {
+    const items = section.items.length
+      ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:4px 0 0;">${section.items.map(item => {
+          const sev = SEVERITY_STYLE[item.severity ?? "info"];
+          return `<tr><td valign="top" style="padding:4px 10px 4px 0;white-space:nowrap;font:bold 10px/1.6 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:1px;color:${sev.color};">${sev.label}</td><td style="padding:4px 0;font:12px/1.6 Helvetica,Arial,sans-serif;color:#292b35;">${escapeHtml(item.text)}</td></tr>`;
+        }).join("")}</table>` : "";
+    return `<div style="margin:0 0 ${i === summary.sections.length - 1 ? 4 : 20}px;">
+      <div style="font:bold 12px/1.4 Helvetica,Arial,sans-serif;color:#1c1f2a;margin:0 0 6px;">${i + 1}. ${escapeHtml(section.title)}</div>
+      <p style="margin:0 0 8px;font:13px/1.7 Georgia,serif;color:#292b35;">${escapeHtml(section.body)}</p>${items}
+    </div>`;
+  }).join("\n");
+  const credit = creditLine(summary);
+  const htmlFull = `${html}${credit ? `<p style="margin:14px 0 0;font:11px/1.6 Helvetica,Arial,sans-serif;color:#5d5e65;">${escapeHtml(credit)}</p>` : ""}`;
+  const text = summary.sections.map((section, i) => `${i + 1}. ${section.title}\n${section.body}${section.items.length ? `\n${section.items.map(item => `  [${SEVERITY_STYLE[item.severity ?? "info"].label}] ${item.text}`).join("\n")}` : ""}`).join("\n\n");
+  return { html: htmlFull, text: `${text}${credit ? `\n\n${credit}` : ""}` };
+}
+
+function summaryFor(p: ReportEmailParams): { html: string; text: string } {
+  return p.execSummary ? execSummaryBlock(p.execSummary) : summaryParagraphs(p.aiSummary);
 }
 
 function summaryParagraphs(aiSummary: string): { html: string; text: string } {  const paras = aiSummary
@@ -325,7 +356,7 @@ export function renderAppsecEmail(appsec: AppSecData, p: ReportEmailParams): Ren
     params: p,
     kpis,
     lists,
-    summaryTextBlock: summaryParagraphs(p.aiSummary),
+    summaryTextBlock: summaryFor(p),
     footerNote: `Sent automatically by the Cloudflare Report Builder — schedule "${p.scheduleName}". Bandwidth served: ${fmtBytes(s.totalBandwidthBytes ?? 0)} (${fmtBytes(s.cachedBandwidthBytes ?? 0)} cached).`,
   });
 }
@@ -382,7 +413,7 @@ export function renderZtEmail(zt: ZeroTrustData, p: ReportEmailParams): Rendered
     params: p,
     kpis,
     lists,
-    summaryTextBlock: summaryParagraphs(p.aiSummary),
+    summaryTextBlock: summaryFor(p),
     footerNote: `Sent automatically by the Cloudflare Report Builder — schedule "${p.scheduleName}".`,
   });
 }

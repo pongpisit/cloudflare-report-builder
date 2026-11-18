@@ -19,6 +19,7 @@ import type { Context } from "hono";
 import type { Env, ScheduleRow, ScheduleConfig, ScheduleReportType, ScheduleFrequency, ReportRangeMode } from "../types";
 import { runSchedule } from "../scheduler";
 import { customDateRange } from "../services/cf-graphql";
+import { deleteSnapshots } from "../services/exec-snapshots";
 import { validateDashboardTemplate, type DashboardTemplate } from "../../../../shared/custom-dashboard-template";
 
 const ALLOWED_DAYS = [1, 3, 5, 7, 14, 30];
@@ -69,6 +70,7 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
     apiTokenSet: !!row.api_token,
     apiTokenHint: row.api_token ? `••••••••${row.api_token.slice(-4)}` : null,
     accountId: row.account_id ?? null,
+    comparePrevious: row.compare_previous === 1,
     dashboardTemplate: row.dashboard_template ? validateDashboardTemplate(JSON.parse(row.dashboard_template)) : null,
   };
 }
@@ -77,6 +79,7 @@ function rowToConfig(row: ScheduleRow): ScheduleConfig {
 
 interface ValidatedSchedule {
   dashboardTemplate: DashboardTemplate | null;
+  comparePrevious: number;
   name: string;
   reportType: ScheduleReportType;
   zoneId: string | null;
@@ -272,6 +275,9 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
     clientLogo = b.clientLogo;
   }
 
+  if (b.comparePrevious !== undefined && typeof b.comparePrevious !== "boolean") return { error: "comparePrevious must be true or false" };
+  // Only AppSec, Zero Trust and Magic Transit emails have a comparison; never stored otherwise.
+  const comparePrevious = b.comparePrevious === true && reportType !== "custom-dashboard";
   const isPoc = b.isPoc === undefined ? true : b.isPoc !== false;
   const enabled = b.enabled === undefined ? true : b.enabled !== false;
 
@@ -281,7 +287,7 @@ function validateSchedule(body: unknown): { data?: ValidatedSchedule; error?: st
       dayOfWeek, dayOfMonth, sendHourUtc, recipients, subject, message,
       isPoc: isPoc ? 1 : 0, clientName, enabled: enabled ? 1 : 0, rangeMode,
       sinceDate, untilDate, sinceTime, untilTime, monthsAgo,
-      period, clientLogo, apiToken, accountId, dashboardTemplate,
+      period, clientLogo, apiToken, accountId, dashboardTemplate, comparePrevious: comparePrevious ? 1 : 0,
     },
   };
 }
@@ -322,8 +328,8 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
         day_of_week, day_of_month, send_hour_utc, recipients, subject, message,
         is_poc, client_name, enabled, created_at, updated_at, range_mode,
         since_date, until_date, since_time, until_time, months_ago, period,
-        client_logo, api_token, account_id, dashboard_template)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        client_logo, api_token, account_id, dashboard_template, compare_previous)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, data.name, data.reportType, data.zoneId, data.zoneName, data.days,
@@ -331,7 +337,7 @@ export async function handleCreateSchedule(c: Context<{ Bindings: Env }>) {
       data.sendHourUtc, data.recipients, data.subject, data.message,
       data.isPoc, data.clientName, data.enabled, now, now, data.rangeMode,
       data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
-      data.clientLogo, data.apiToken ?? null, data.accountId, data.dashboardTemplate ? JSON.stringify(data.dashboardTemplate) : null
+      data.clientLogo, data.apiToken ?? null, data.accountId, data.dashboardTemplate ? JSON.stringify(data.dashboardTemplate) : null, data.comparePrevious
     )
     .run();
 
@@ -365,7 +371,7 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
        recipients = ?, subject = ?, message = ?, is_poc = ?, client_name = ?,
        enabled = ?, updated_at = ?, range_mode = ?,
        since_date = ?, until_date = ?, since_time = ?, until_time = ?, months_ago = ?, period = ?,
-       client_logo = ?, api_token = ?, account_id = ?, dashboard_template = ?
+       client_logo = ?, api_token = ?, account_id = ?, dashboard_template = ?, compare_previous = ?
      WHERE id = ?`
   )
     .bind(
@@ -374,9 +380,11 @@ export async function handleUpdateSchedule(c: Context<{ Bindings: Env }>) {
       data.recipients, data.subject, data.message, data.isPoc, data.clientName,
       data.enabled, now, data.rangeMode,
       data.sinceDate, data.untilDate, data.sinceTime, data.untilTime, data.monthsAgo, data.period,
-      data.clientLogo, apiToken, data.accountId, data.dashboardTemplate ? JSON.stringify(data.dashboardTemplate) : null, id
+      data.clientLogo, apiToken, data.accountId, data.dashboardTemplate ? JSON.stringify(data.dashboardTemplate) : null, data.comparePrevious, id
     )
     .run();
+  // Opting out (or changing the report type) removes the stored comparison data immediately.
+  if (data.comparePrevious === 0 && existing.compare_previous === 1) await deleteSnapshots(c.env.DB, id);
 
   const row = await getScheduleRow(c.env, id);
   if (!row) return c.json({ error: "Schedule not found" }, 404);
@@ -389,6 +397,7 @@ export async function handleDeleteSchedule(c: Context<{ Bindings: Env }>) {
   const id = c.req.param("id") ?? "";
   const res = await c.env.DB.prepare("DELETE FROM schedules WHERE id = ?").bind(id).run();
   if ((res.meta.changes ?? 0) === 0) return c.json({ error: "Schedule not found" }, 404);
+  await deleteSnapshots(c.env.DB, id);
   // Keep send_history rows as an audit trail; they reference schedule_id only.
   return c.json({ ok: true });
 }

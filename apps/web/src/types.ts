@@ -760,6 +760,8 @@ export type ReportPeriod = "yesterday" | "last_week" | "last_month";
 
 export interface ScheduleConfig {
   dashboardTemplate?: import("../../../shared/custom-dashboard-template").DashboardTemplate | null;
+  /** Opt-in: the scheduled email compares with the previous report. */
+  comparePrevious?: boolean;
   id: string;
   name: string;
   reportType: ScheduleReportType;
@@ -803,6 +805,8 @@ export interface ScheduleConfig {
 /** Payload for create/update — everything the dashboard configures. */
 export interface ScheduleInput {
   dashboardTemplate?: import("../../../shared/custom-dashboard-template").DashboardTemplate | null;
+  /** Opt-in: the scheduled email compares with the previous report. */
+  comparePrevious?: boolean;
   name: string;
   reportType: ScheduleReportType;
   zoneId: string | null;

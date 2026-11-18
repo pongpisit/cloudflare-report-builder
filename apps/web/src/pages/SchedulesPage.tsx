@@ -573,6 +573,7 @@ function configToInput(s: ScheduleConfig, enabledOverride?: boolean): ScheduleIn
     enabled: enabledOverride ?? s.enabled,
     accountId: s.accountId,
     dashboardTemplate: s.dashboardTemplate ?? null,
+    comparePrevious: s.comparePrevious === true,
   };
 }
 
@@ -615,6 +616,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
   const [subject, setSubject] = useState(initial?.subject ?? "");
   const [message, setMessage] = useState(initial?.message ?? "");
   const [isPoc, setIsPoc] = useState(initial?.isPoc ?? true);
+  const [comparePrevious, setComparePrevious] = useState(initial?.comparePrevious === true);
   const [clientName, setClientName] = useState(initial?.clientName ?? "");
   // Client branding — same rules as the on-demand form: data URI ≤2MB,
   // PNG/JPG/SVG/WebP. Stored on the schedule; rendered on the email cover
@@ -715,6 +717,7 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
       zoneId: reportType === "appsec" || reportType === "custom-dashboard" ? zoneId : null,
       zoneName: reportType === "appsec" || reportType === "custom-dashboard" ? (selectedZone?.name ?? zoneName ?? null) : null,
       dashboardTemplate: reportType === "custom-dashboard" ? validateDashboardTemplate(dashboardTemplate) : null,
+      comparePrevious: reportType !== "custom-dashboard" && comparePrevious,
       days,
       tzOffset,
       rangeMode,
@@ -1213,6 +1216,26 @@ function ScheduleForm({ initial, zones, zonesError, loadingZones, onRetryZones, 
             </span>
             <span style={{ fontSize: 11, color: "#5d5e65", lineHeight: 1.5 }}>
               POC framing for the AI executive summary and recommendations. Uncheck for a neutral assessment tone.
+            </span>
+          </div>
+        </label>}
+
+        {/* Opt-in comparison with the previous report */}
+        {reportType !== "custom-dashboard" && <label style={{
+          display: "flex", alignItems: "flex-start", gap: 12,
+          padding: "14px 16px", cursor: "pointer",
+          border: "1px solid #c4c4c4", backgroundColor: "#fafafa",
+        }}>
+          <input type="checkbox" checked={comparePrevious} onChange={(e) => setComparePrevious(e.target.checked)}
+            style={{ marginTop: 2, width: 16, height: 16, accentColor: "#ba0816", cursor: "pointer", flexShrink: 0 }} />
+          <div>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#292b35", display: "block", marginBottom: 2 }}>
+              Compare with the previous report
+            </span>
+            <span style={{ fontSize: 11, color: "#5d5e65", lineHeight: 1.5 }}>
+              Adds a "Changes since the previous report" section to the email summary. After each successful send, a small snapshot of counts and risk codes
+              (no hostnames, IPs, emails or tokens) is kept for the next comparison. The first run has nothing to compare with. Only reports of the same length are compared.
+              Leave unticked and no comparison is made or stored.
             </span>
           </div>
         </label>}

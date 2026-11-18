@@ -107,9 +107,13 @@ test("migration preserves old fields/history and template CRUD retains write-onl
     const before = db.prepare("SELECT * FROM schedules").all(), history = db.prepare("SELECT * FROM send_history").all();
     const others = db.prepare("SELECT name,sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE '%schedules%' ORDER BY name").all();
     db.exec(readFileSync(resolve("migrations/0015_custom_dashboard_report.sql"), "utf8"));
-    const after = db.prepare("SELECT * FROM schedules").all().map(({ dashboard_template, ...row }) => { expect(dashboard_template).toBeNull(); return row; });
+    db.exec(readFileSync(resolve("migrations/0016_exec_summary_compare.sql"), "utf8"));
+    const after = db.prepare("SELECT * FROM schedules").all().map(({ dashboard_template, compare_previous, ...row }) => { expect(dashboard_template).toBeNull(); expect(compare_previous).toBe(0); return row; });
     expect(after).toEqual(before); expect(db.prepare("SELECT * FROM send_history").all()).toEqual(history);
-    expect(db.prepare("SELECT name,sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE '%schedules%' ORDER BY name").all()).toEqual(others);
+    // 0016 adds only its own snapshot table and index; every other existing table and index is untouched.
+    const unrelated = db.prepare("SELECT name,sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE '%schedules%' AND name NOT LIKE '%exec_%snapshots%' ORDER BY name").all();
+    expect(unrelated).toEqual(others);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%exec_%snapshots%' ORDER BY name").all().map(r => r.name)).toEqual(["exec_report_snapshots", "idx_exec_snapshots_schedule", "sqlite_autoindex_exec_report_snapshots_1"]);
     const body = { ...base, reportType: "custom-dashboard", dashboardTemplate: defaultDashboardTemplate() };
     const created = await request(body); expect(created.status).toBe(201);
     const json = await created.json(); expect(json.schedule.dashboardTemplate).toEqual(body.dashboardTemplate);

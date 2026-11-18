@@ -20,10 +20,10 @@
 import type { Env, ScheduleRow } from "./types";
 import { generateAppsecData } from "./routes/fetch-appsec";
 import { generateZerotrustData } from "./routes/fetch-zerotrust";
-import { generateAiSummary } from "./routes/ai-summary";
-import { generateZtSummary } from "./routes/ai-zt-summary";
 import { generateMagicTransitData } from "./routes/fetch-magic-transit";
-import { generateMtSummary } from "./routes/ai-magic-transit-summary";
+import { buildExecutiveSummary, auditRecord, execSummaryParagraphs, type ExecutiveSummary } from "./services/exec-summary";
+import { appsecFactPack, zeroTrustFactPack, magicTransitFactPack, type Comparison, type Snapshot } from "./services/exec-facts";
+import { loadPreviousSnapshot, saveSnapshot as saveExecSnapshot } from "./services/exec-snapshots";
 import {
   applySubjectTokens,
   renderAppsecEmail,
@@ -222,6 +222,23 @@ export async function runSchedule(
     let mt: Awaited<ReturnType<typeof generateMagicTransitData>> | undefined;
     let dashboard: Awaited<ReturnType<typeof generateCustomDashboardData>> | undefined;
     let aiSummary = "";
+    let execSummary: ExecutiveSummary | undefined;
+    let execSnapshot: Snapshot | undefined;
+    let execProduct: string | undefined;
+
+    // Opt-in only: the previous report is read (and later written) when the schedule
+    // ticked "compare with previous report". Otherwise no comparison data exists at all.
+    const compare = row.compare_previous === 1;
+    async function comparison(product: string): Promise<Comparison | undefined> {
+      if (!compare) return undefined;
+      const loaded = await loadPreviousSnapshot(env.DB, row.id, product);
+      return { previous: loaded.ok ? loaded.previous : null };
+    }
+    const summarise = async (pack: ReturnType<typeof appsecFactPack>, product: string): Promise<void> => {
+      execSnapshot = pack.snapshot; execProduct = product;
+      execSummary = await buildExecutiveSummary(env, pack.pack, isPoc);
+      aiSummary = execSummaryParagraphs(execSummary);
+    };
 
     if (row.report_type === "custom-dashboard") {
       if (!row.zone_id || !row.dashboard_template) throw new Error("Dashboard schedule requires a zone and saved widget template.");
@@ -249,10 +266,7 @@ export async function runSchedule(
         monthsAgo: row.months_ago ?? undefined,
         period: (row.period ?? undefined) as ReportPeriod | undefined,
       });
-      aiSummary = await generateAiSummary(env, appsec, isPoc).catch((e) => {
-        console.warn("[scheduler] AI summary failed, sending without it:", String(e));
-        return "";
-      });
+      await summarise(appsecFactPack(appsec, await comparison("appsec")), "appsec");
       const params: ReportEmailParams = {
         scheduleName: row.name,
         message: row.message ?? "",
@@ -260,6 +274,7 @@ export async function runSchedule(
         clientName: row.client_name,
         clientLogo: row.client_logo ?? undefined,
         aiSummary,
+        execSummary,
       };
       rendered = renderAppsecEmail(appsec, params);
       subject = applySubjectTokens(row.subject, { zone: appsec.meta?.zoneName });
@@ -271,8 +286,8 @@ export async function runSchedule(
         sinceTime: row.since_time ?? undefined, untilTime: row.until_time ?? undefined,
         monthsAgo: row.months_ago ?? undefined,
       });
-      aiSummary = await generateMtSummary(env, mt, isPoc).catch(() => "");
-      rendered = renderMtEmail(mt, { scheduleName: row.name, message: row.message ?? "", isPoc, clientName: row.client_name, clientLogo: row.client_logo ?? undefined, aiSummary });
+      await summarise(magicTransitFactPack(mt, await comparison("magic-transit")), "magic-transit");
+      rendered = renderMtEmail(mt, { scheduleName: row.name, message: row.message ?? "", isPoc, clientName: row.client_name, clientLogo: row.client_logo ?? undefined, aiSummary, execSummary });
       subject = applySubjectTokens(row.subject, { account: mt.meta.accountName });
     } else if (row.report_type === "zero-trust") {
       zt = await generateZerotrustData({
@@ -286,10 +301,7 @@ export async function runSchedule(
         period: (row.period ?? undefined) as ReportPeriod | undefined,
         db: env.DB,
       });
-      aiSummary = await generateZtSummary(env, zt, isPoc).catch((e) => {
-        console.warn("[scheduler] AI summary failed, sending without it:", String(e));
-        return "";
-      });
+      await summarise(zeroTrustFactPack(zt, await comparison("zero-trust")), "zero-trust");
       const params: ReportEmailParams = {
         scheduleName: row.name,
         message: row.message ?? "",
@@ -297,6 +309,7 @@ export async function runSchedule(
         clientName: row.client_name,
         clientLogo: row.client_logo ?? undefined,
         aiSummary,
+        execSummary,
       };
       rendered = renderZtEmail(zt, params);
       subject = applySubjectTokens(row.subject, { account: zt.meta?.accountName });
@@ -375,6 +388,15 @@ export async function runSchedule(
     ok = sendResult.ok;
     error = sendResult.error;
     messageId = sendResult.messageId;
+
+    // Comparison baseline: only for opted-in schedules, and only after a successful send.
+    if (ok && compare && execSnapshot && execProduct) await saveExecSnapshot(env.DB, row.id, execProduct, execSnapshot);
+    // Which models wrote which section (no customer data, no model text), kept with the archive.
+    if (execSummary) {
+      await env.AUDIT_BUCKET.put(`scheduled/${row.id}/${startedAt.replace(/[:.]/g, "-")}-summary-audit.json`, JSON.stringify({ generatedAt: startedAt, compare, ...auditRecord(execSummary) }), {
+        httpMetadata: { contentType: "application/json" },
+      }).catch(() => console.warn("[scheduler] summary audit save failed"));
+    }
 
     // Archive what was generated (even if the send failed — useful for
     // debugging). The FULL report is the primary archive artifact; the

@@ -80,6 +80,8 @@ export interface ScheduleRow {
   api_token: string | null;      // per-schedule customer token (write-only via API)
   account_id: string | null;     // per-schedule customer account (falls back to backend)
   dashboard_template?: string | null;
+  /** 1 = scheduled email compares with the previous report (opt-in). */
+  compare_previous?: number;
 }
 
 /** Schedule as returned to the dashboard (recipients parsed, booleans coerced) */
@@ -123,6 +125,8 @@ export interface ScheduleConfig {
   /** Per-schedule customer account ID (null = use the backend account). */
   accountId: string | null;
   dashboardTemplate?: import("../../../shared/custom-dashboard-template").DashboardTemplate | null;
+  /** Opt-in: the scheduled email compares with the previous report. */
+  comparePrevious?: boolean;
 }
 
 export interface SendHistoryRow {

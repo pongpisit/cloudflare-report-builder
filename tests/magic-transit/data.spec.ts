@@ -159,7 +159,12 @@ test("Magic Transit schedule dispatch sends an embedded MT attachment and archiv
     expect(attachment.content).toContain('"product":"magic-transit"');
     expect(attachment.content).not.toContain(TEST_TOKEN);
     expect(attachment.content).not.toContain("must-never-leave-upstream");
-    expect(archives).toHaveLength(2);
+    // Two report artifacts plus the model-credit audit record for the executive summary.
+    expect(archives).toHaveLength(3);
+    expect(archives.filter(k => k.endsWith("-full.html"))).toHaveLength(1);
+    expect(archives.filter(k => k.endsWith("-summary-audit.json"))).toHaveLength(1);
+    expect(archives.filter(k => k.endsWith(".html"))).toHaveLength(2);
     expect(writes.some(s => s.includes("send_history"))).toBe(true);
+    expect(writes.some(s => s.includes("exec_report_snapshots"))).toBe(false);
   } finally { globalThis.fetch = original; }
 });
