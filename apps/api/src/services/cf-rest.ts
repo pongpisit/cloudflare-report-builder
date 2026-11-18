@@ -601,9 +601,11 @@ export async function getCustomWafRules(
   zoneId: string
 ): Promise<CustomWafRule[]> {
   const listRes = await cfGet<CfRuleset[]>(token, `/zones/${zoneId}/rulesets`);
-  if (!listRes.ok || !listRes.data) return [];
+  // Throw instead of returning []: an empty list reads as "no rules", which is a claim about the zone.
+  if (!listRes.ok || !listRes.data) throw new Error("Could not list the zone's rulesets");
 
   const rules: CustomWafRule[] = [];
+  let failedRulesets = 0;
 
   // Find custom firewall and rate-limit rulesets (kind = zone, not managed)
   const targetPhases = new Set([
@@ -622,7 +624,8 @@ export async function getCustomWafRules(
         token,
         `/zones/${zoneId}/rulesets/${rs.id}`
       );
-      if (!detail.ok || !detail.data?.rules) return;
+      if (!detail.ok) { failedRulesets++; return; }
+      if (!detail.data?.rules) return;
       for (const rule of detail.data.rules) {
         rules.push({
           id:          rule.id,
@@ -637,6 +640,8 @@ export async function getCustomWafRules(
       }
     })
   );
+
+  if (failedRulesets > 0) throw new Error(`${failedRulesets} custom ruleset(s) could not be read`);
 
   return rules.sort((a, b) => {
     // Sort: enabled first, then by action severity

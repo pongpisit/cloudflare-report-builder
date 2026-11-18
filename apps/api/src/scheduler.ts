@@ -23,6 +23,7 @@ import { generateZerotrustData } from "./routes/fetch-zerotrust";
 import { generateMagicTransitData } from "./routes/fetch-magic-transit";
 import { buildExecutiveSummary, auditRecord, creditLine, execSummaryParagraphs, type ExecutiveSummary } from "./services/exec-summary";
 import { appsecFactPack, zeroTrustFactPack, magicTransitFactPack, type Comparison, type Snapshot } from "./services/exec-facts";
+import { fetchRadarBriefings, type RadarResult } from "./services/radar-news";
 import { loadPreviousSnapshot, saveSnapshot as saveExecSnapshot } from "./services/exec-snapshots";
 import {
   applySubjectTokens,
@@ -225,6 +226,7 @@ export async function runSchedule(
     let execSummary: ExecutiveSummary | undefined;
     let execSnapshot: Snapshot | undefined;
     let execProduct: string | undefined;
+    let radar: RadarResult | undefined;
 
     // Opt-in only: the previous report is read (and later written) when the schedule
     // ticked "compare with previous report". Otherwise no comparison data exists at all.
@@ -236,7 +238,9 @@ export async function runSchedule(
     }
     const summarise = async (pack: ReturnType<typeof appsecFactPack>, product: string): Promise<void> => {
       execSnapshot = pack.snapshot; execProduct = product;
-      execSummary = await buildExecutiveSummary(env, pack.pack, isPoc);
+      // Radar runs alongside the models and can never fail the report: it returns an explicit "unavailable".
+      const [summary, news] = await Promise.all([buildExecutiveSummary(env, pack.pack, isPoc), fetchRadarBriefings()]);
+      execSummary = summary; radar = news;
       aiSummary = execSummaryParagraphs(execSummary);
     };
 
@@ -275,6 +279,7 @@ export async function runSchedule(
         clientLogo: row.client_logo ?? undefined,
         aiSummary,
         execSummary,
+        radar,
       };
       rendered = renderAppsecEmail(appsec, params);
       subject = applySubjectTokens(row.subject, { zone: appsec.meta?.zoneName });
@@ -287,7 +292,7 @@ export async function runSchedule(
         monthsAgo: row.months_ago ?? undefined,
       });
       await summarise(magicTransitFactPack(mt, await comparison("magic-transit")), "magic-transit");
-      rendered = renderMtEmail(mt, { scheduleName: row.name, message: row.message ?? "", isPoc, clientName: row.client_name, clientLogo: row.client_logo ?? undefined, aiSummary, execSummary });
+      rendered = renderMtEmail(mt, { scheduleName: row.name, message: row.message ?? "", isPoc, clientName: row.client_name, clientLogo: row.client_logo ?? undefined, aiSummary, execSummary, radar });
       subject = applySubjectTokens(row.subject, { account: mt.meta.accountName });
     } else if (row.report_type === "zero-trust") {
       zt = await generateZerotrustData({
@@ -310,6 +315,7 @@ export async function runSchedule(
         clientLogo: row.client_logo ?? undefined,
         aiSummary,
         execSummary,
+        radar,
       };
       rendered = renderZtEmail(zt, params);
       subject = applySubjectTokens(row.subject, { account: zt.meta?.accountName });
@@ -352,7 +358,7 @@ export async function runSchedule(
           data: appsec ?? zt ?? mt ?? dashboard,
           input: inputForEmbedded,
           aiSummary,
-          execSummary: execSummary ? { sections: execSummary.sections.map(x => ({ id: x.id, title: x.title, body: x.body, items: x.items.map(i => ({ text: i.text, severity: i.severity, tag: i.tag })) })), credit: creditLine(execSummary) } : undefined,
+          execSummary: execSummary ? { sections: execSummary.sections.map(x => ({ id: x.id, title: x.title, body: x.body, items: x.items.map(i => ({ text: i.text, severity: i.severity, tag: i.tag })), topics: x.topics?.map(t => ({ id: t.id, title: t.title, body: t.body, items: t.items.map(i => ({ text: i.text, severity: i.severity, tag: i.tag })) })) })), credit: creditLine(execSummary) } : undefined,
           generatedAt: (appsec?.meta?.generatedAt ?? zt?.meta?.generatedAt ?? mt?.meta.generatedAt) ?? new Date().toISOString(),
           scheduleName: row.name,
         },

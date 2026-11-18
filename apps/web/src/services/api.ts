@@ -130,6 +130,18 @@ export async function fetchAiSummary(appsec: AppSecData, isPoc = true): Promise<
   return result.summary;
 }
 
+/** Structured executive summary + general Radar news for the on-demand AppSec report. */
+export interface AppsecSummary {
+  ok: true;
+  sections: import("../components/ExecSummarySections").ExecSummaryPayload["sections"];
+  credit: string;
+  radar: import("../components/RadarNews").RadarNewsPayload;
+  generatedAt: string;
+}
+export async function fetchAppsecSummary(appsec: AppSecData, isPoc = true): Promise<AppsecSummary> {
+  return post<AppsecSummary>("/api/appsec-summary", { appsec, isPoc });
+}
+
 /**
  * Returns the email of the logged-in user from Cloudflare Access.
  * The Pages Function reads the CF_Authorization JWT (Warp/Gateway policy)

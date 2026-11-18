@@ -3,13 +3,14 @@
  * Professional PDF-first layout: cover → TOC → exec summary → sections.
  */
 import ExecSummarySections, { embeddedExecSummary } from "../components/ExecSummarySections";
+import RadarNews, { type RadarNewsPayload } from "../components/RadarNews";
 import { useState, useEffect, useRef } from "react";
 import {
   Printer, RefreshCw, Shield, Clock, Globe, User,
   Loader2, CheckCircle, AlertCircle, Sparkles, FileText,
 } from "lucide-react";
 import type { AppSecData, ReportInput } from "../types";
-import { fetchAiSummary, saveAuditReport } from "../services/api";
+import { fetchAppsecSummary, saveAuditReport } from "../services/api";
 import { saveToPdf, saveToHtml, captureReportHtml } from "../utils/pdf-export";
 import { formatDate } from "../utils/formatters";
 import CoverGraphic from "../components/CoverGraphic";
@@ -51,6 +52,9 @@ export default function ReportPage({ data, input, onReset, userEmail }: Props) {
   const [aiSummary, setAiSummary] = useState<string>("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string>("");
+  // Structured summary (five sections + topic notes) and general Radar news, as in the scheduled email.
+  const [structured, setStructured] = useState<{ sections: import("../components/ExecSummarySections").ExecSummaryPayload["sections"]; credit: string } | null>(null);
+  const [radar, setRadar] = useState<RadarNewsPayload | undefined>(undefined);
   const [htmlExporting, setHtmlExporting] = useState(false);
   const [auditSaved, setAuditSaved] = useState<string | null>(null); // key of saved report
 
@@ -75,13 +79,16 @@ export default function ReportPage({ data, input, onReset, userEmail }: Props) {
     setAiLoading(true);
     setAiError("");
     try {
-      const summary = await fetchAiSummary(data, isPoc);
-      setAiSummary(summary);
+      const result = await fetchAppsecSummary(data, isPoc);
+      setStructured({ sections: result.sections, credit: result.credit });
+      setRadar(result.radar);
+      // The flat text form is what the audit snapshot and the attachment summary use.
+      setAiSummary(result.sections.map(s => `${s.title}\n${s.body}`).join("\n\n"));
       // Auto-save audit snapshot after AI summary is ready (DOM is fully rendered)
       // Small delay to let React commit the summary text to the DOM first
-      setTimeout(() => saveAudit(summary), 1500);
+      setTimeout(() => saveAudit(result.sections.map(s => `${s.title}\n${s.body}`).join("\n\n")), 1500);
     } catch (e) {
-      setAiError(String(e));
+      setAiError(e instanceof Error ? e.message : String(e));
       // Save audit even if AI summary fails — report data is still complete
       setTimeout(() => saveAudit(""), 1500);
     } finally {
@@ -415,7 +422,8 @@ export default function ReportPage({ data, input, onReset, userEmail }: Props) {
           )}
 
           {embeddedSummary && <ExecSummarySections summary={embeddedSummary} />}
-          {!embeddedSummary && aiSummary && !aiLoading && (
+          {!embeddedSummary && structured && !aiLoading && <ExecSummarySections summary={{ ...structured, sections: structured.sections }} />}
+          {!embeddedSummary && !structured && aiSummary && !aiLoading && (
             <div>
               <div className="space-y-5 print:space-y-6">
                 {aiSummary.split("\n\n").filter(Boolean).map((para, i) => {
@@ -449,6 +457,8 @@ export default function ReportPage({ data, input, onReset, userEmail }: Props) {
               </div>
             </div>
           )}
+
+          {!embeddedSummary && <RadarNews radar={radar} />}
 
           {/* Key metrics strip — visible in print exec summary */}
           <div className="hidden print:grid print:grid-cols-3 print:gap-6 print:mt-10 print:pt-8 print:border-t print:border-cf-gray-200">

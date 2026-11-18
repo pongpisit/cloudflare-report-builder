@@ -7,6 +7,7 @@
 
 import type { Context } from "hono";
 import type { Env, ReportRangeMode } from "../types";
+import { rateLimitCoverage } from "../../../../shared/rate-limiting";
 import { fetchAppSecConfig, fetchEmailSecurity, fetchDnsRecordsEnriched, getCustomWafRules, type CfCertPack, type CfRuleset, type CfRateLimit } from "../services/cf-rest";
 import {
   last30Days,
@@ -338,7 +339,12 @@ export async function generateAppsecData(input: {
   const dnsRecordsEnrichedResult = await fetchDnsRecordsEnriched(token, zoneId).catch(() => []);
 
   // ── 1d. Custom WAF + Rate Limit rules with full expressions ──────────────────
-  const customWafRules = await getCustomWafRules(token, zoneId).catch(() => []);
+  let customRulesUnavailable = false;
+  const customWafRules = await getCustomWafRules(token, zoneId).catch((e) => {
+    customRulesUnavailable = true;
+    errors.customWafRules = e instanceof Error ? e.message : "Custom rules unavailable";
+    return [] as Awaited<ReturnType<typeof getCustomWafRules>>;
+  });
 
   // ── 1e. Managed WAF ruleset deployment + real rule categories ────────────────
   // Finds which managed rulesets (OWASP Core, Cloudflare Managed, Sensitive
@@ -779,7 +785,10 @@ export async function generateAppsecData(input: {
       lastUpdated: op.last_updated,
       requestsTotal: op.features?.thresholds?.requests ?? 0,
     }));
+  // Cloudflare's own label count is authoritative, including a real 0. The heuristic sample is a list of
+  // possible examples and must never be used as a count when the authoritative figure exists.
   const apiZombieEndpointsTotalCount = restZombieCount ?? apiZombieEndpoints.length;
+  const apiZombieCountIsAuthoritative = restZombieCount !== undefined;
 
   // Build an operation_id → {method, endpoint, host} map from all fetched
   // operation lists (top-traffic + low-traffic) to resolve human-readable
@@ -1063,6 +1072,8 @@ export async function generateAppsecData(input: {
 
   // ── 11. Rate limits & WAF managed rules ───────────────────────────────────────
   const rateLimitRules = transformRateLimits(config.rateLimits as CfRateLimit[]);
+  // Rulesets-based rate limiting (phase http_ratelimit) is the current mechanism; count both kinds.
+  const rateLimiting = rateLimitCoverage({ legacy: rateLimitRules, rules: customWafRules });
   const wafManagedRules = extractWafManagedRules(config.rulesets as CfRuleset[]);
 
   // ── 12. Error time-series ────────────────────────────────────────────────────
@@ -1373,7 +1384,14 @@ export async function generateAppsecData(input: {
 
   // ── Cache ─────────────────────────────────────────────────────────────────────
 
-  if (cacheHitRatePct < 40 && totalRequests > 1000) {
+  // A low cache hit rate is normal, and not a defect, when most traffic is dynamic content that is not cacheable by
+  // default (booking and search APIs, authenticated pages). Only advise when there is cacheable traffic to win.
+  const dynamicSharePct = (() => {
+    const total = cacheBreakdown.reduce((t, r) => t + r.requests, 0);
+    const dynamic = cacheBreakdown.filter(r => r.cacheStatus === "dynamic").reduce((t, r) => t + r.requests, 0);
+    return total > 0 ? Math.round((dynamic / total) * 100) : 0;
+  })();
+  if (cacheHitRatePct < 40 && totalRequests > 1000 && dynamicSharePct < 80) {
     recommendations.push({
       priority: "medium",
       title: "Improve Cache Hit Rate (Currently " + cacheHitRatePct + "%)",
@@ -1474,7 +1492,7 @@ export async function generateAppsecData(input: {
 
   // ── Rate Limiting ─────────────────────────────────────────────────────────────
 
-  if (rateLimitRules.length === 0) {
+  if (rateLimiting.total === 0 && !customRulesUnavailable) {
     recommendations.push({
       priority: "high",
       title: "Configure Rate Limiting on Login & API Endpoints",
@@ -1489,11 +1507,11 @@ export async function generateAppsecData(input: {
         cfDocs: "waf/rate-limiting-rules/",
       },
     });
-  } else if (rateLimitRules.length < 3) {
+  } else if (rateLimiting.active < 3 && !customRulesUnavailable) {
     recommendations.push({
       priority: "low",
       title: "Expand Rate Limiting Coverage",
-      description: `Only ${rateLimitRules.length} rate limiting rule(s) configured. Add rules to protect API endpoints, password reset, and checkout flows.`,
+      description: `Only ${rateLimiting.active} enabled rate limiting rule(s) configured. Add rules to protect API endpoints, password reset, and checkout flows.`,
       benefit: "Comprehensive rate limiting prevents API abuse and automated attacks across all sensitive endpoints",
       ruleTemplate: {
         type: "rate_limit",
@@ -1918,7 +1936,7 @@ export async function generateAppsecData(input: {
   }
 
   const loginLabel = apiUseCaseLabels.find((r) => r.label === "cf-log-in");
-  if (loginLabel && loginLabel.requests > 0 && rateLimitRules.length === 0) {
+  if (loginLabel && loginLabel.requests > 0 && rateLimiting.active === 0 && !customRulesUnavailable) {
     recommendations.push({
       priority: "high",
       title: `Rate Limit Login Endpoint${loginLabel.operationCount === 1 ? "" : "s"} (${loginLabel.requests.toLocaleString()} requests observed)`,
@@ -2105,6 +2123,7 @@ export async function generateAppsecData(input: {
     apiUseCaseLabels,
     apiZombieEndpoints,
     apiZombieEndpointsTotalCount,
+    apiZombieCountIsAuthoritative,
     apiRiskyEndpoints,
     apiOperationsTotalCount,
     discoveryPendingReviewCount,

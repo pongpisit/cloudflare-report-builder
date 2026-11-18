@@ -11,7 +11,9 @@
 
 import type { AppSecData, ZeroTrustData } from "../types";
 import type { MagicTransitData } from "../../../../shared/magic-transit";
-import { cleanText, type Fact, type FactPack, type SectionFacts, type Severity } from "./exec-summary";
+import { rateLimitCoverage } from "../../../../shared/rate-limiting";
+import { LEAKED_CREDENTIAL_RESULTS } from "./cf-graphql";
+import { cleanText, type Fact, type FactPack, type SectionFacts, type Severity, type TopicFacts } from "./exec-summary";
 
 // ─── Formatting ───────────────────────────────────────────────────────────────
 
@@ -37,7 +39,7 @@ const plural = (n: number, one: string, many = `${one}s`): string => n === 1 ? o
 
 // ─── Comparison (opt-in) ──────────────────────────────────────────────────────
 
-export interface Snapshot { metrics: Record<string, number>; risks: string[]; days: number; generatedAt: string }
+export interface Snapshot { metrics: Record<string, number>; risks: string[]; days: number; generatedAt: string; /** The period the snapshot covers, e.g. "2026-11-16". */ period?: string }
 export interface Comparison { previous: Snapshot | null }
 
 /** Human labels for stable metric keys and risk codes (also used for risks that no longer apply). */
@@ -60,20 +62,29 @@ const RISK_LABELS: Record<string, string> = {
   dnsproxy: "Fewer than 60% of DNS records are proxied", tls13: "TLS 1.3 is not enabled", https: "Always HTTPS is not enforced", upload: "Malicious upload scanning is not enabled",
   bots: "Automated traffic is above 30% of requests", casb: "Critical or high CASB findings exist", tunnels: "Tunnels are degraded, down or inactive",
   offline: "Many enrolled WARP devices are offline", neverlogged: "Licensed seats have never logged in", dlp: "DLP matches were recorded",
-  mttunnels: "Tunnel health or routing problems were observed", mtprobe: "Tunnel probe success is below 99%", mtunavailable: "Some report sections were unavailable",
+  mttunnels: "Tunnel health or routing problems were observed", mintls: "The minimum TLS version accepts deprecated protocols", mtprobe: "Tunnel probe success is below 99%", mtunavailable: "Some report sections were unavailable",
   mtattack: "An attack event is still ongoing", mtprefix: "A prefix is not currently advertised",
 };
 
-export function snapshotFromFacts(metrics: Record<string, number>, risks: string[], days: number, generatedAt: string): Snapshot {
-  return { metrics, risks: [...new Set(risks)].sort(), days, generatedAt };
+/** "Nov 16, 2026 (2026-11-16 to 2026-11-16)" reads better in a sentence as just "2026-11-16". */
+export function shortPeriod(period: string): string {
+  const range = period.match(/\(([^)]+)\)/)?.[1] ?? period;
+  const single = range.match(/^(\d{4}-\d{2}-\d{2}) to \1$/);
+  return (single ? single[1] : range).trim();
+}
+
+export function snapshotFromFacts(metrics: Record<string, number>, risks: string[], days: number, generatedAt: string, period?: string): Snapshot {
+  return { metrics, risks: [...new Set(risks)].sort(), days, generatedAt, period };
 }
 
 function changeFacts(current: Snapshot, comparison: Comparison): Fact[] {
   const prev = comparison.previous;
   if (!prev) return [{ id: "ch-first", text: "This is the first report with comparison enabled, so there is no earlier report to compare against." }];
-  const date = prev.generatedAt.slice(0, 10);
+  // Name the period the previous report covered, not the day it happened to be sent: two test reports sent on the
+  // same day covered different days, which made "the previous report sent on ..." misleading.
+  const date = prev.period ? `the period ${shortPeriod(prev.period)}` : `the report sent on ${prev.generatedAt.slice(0, 10)}`;
   if (prev.days !== current.days) {
-    return [{ id: "ch-days", text: `The previous report (sent on ${date}) covered ${prev.days} ${plural(prev.days, "day")} and this one covers ${current.days} ${plural(current.days, "day")}, so their figures are not compared.` }];
+    return [{ id: "ch-days", text: `The previous report (${date}) covered ${prev.days} ${plural(prev.days, "day")} and this one covers ${current.days} ${plural(current.days, "day")}, so their figures are not compared.` }];
   }
   const facts: Fact[] = [];
   for (const [key, now] of Object.entries(current.metrics)) {
@@ -84,22 +95,37 @@ function changeFacts(current: Snapshot, comparison: Comparison): Fact[] {
     if (change !== null && Math.abs(change) < 10) continue;
     const isBytes = key.endsWith("Bytes");
     const f = (n: number) => isBytes ? fmtBytes(n) : fmt(n);
+    // These metrics are already rounded whole percentages, so a relative change of "11 to 9" is really 2 points.
+    // Reporting it as an 18% fall overstates it.
+    const isPercentMetric = /Pct$/.test(key);
     facts.push({
       id: `ch-${key}`, severity: "info",
       text: change === null
         ? `${label} went from ${f(before)} in the previous report to ${f(now)}.`
-        : `${label} ${now > before ? "rose" : "fell"} by ${Math.abs(change)}% from ${f(before)} to ${f(now)}.`,
+        : isPercentMetric
+          ? `${label} moved from ${f(before)}% to ${f(now)}%, a change of ${Math.abs(Math.round((now - before) * 10) / 10)} percentage points.`
+          : `${label} ${now > before ? "rose" : "fell"} by ${Math.abs(change)}% from ${f(before)} to ${f(now)}.`,
     });
   }
   const prevRisks = new Set(prev.risks), nowRisks = new Set(current.risks);
   for (const code of nowRisks) if (!prevRisks.has(code)) facts.push({ id: `ch-new-${code}`, severity: "high", text: `New since the previous report: ${RISK_LABELS[code] ?? code}.` });
   for (const code of prevRisks) if (!nowRisks.has(code)) facts.push({ id: `ch-gone-${code}`, severity: "info", text: `No longer present since the previous report: ${RISK_LABELS[code] ?? code}.` });
-  if (!facts.length) facts.push({ id: "ch-none", text: `Compared with the previous report sent on ${date}, no tracked figure moved by 10% or more and no risk appeared or cleared.` });
-  else facts.unshift({ id: "ch-ref", text: `Compared with the previous report sent on ${date} (same ${current.days}-day length).` });
+  if (!facts.length) facts.push({ id: "ch-none", text: `Compared with ${date}, no tracked figure moved by 10% or more and no risk appeared or cleared.` });
+  else facts.unshift({ id: "ch-ref", text: `Compared with ${date} (same ${current.days}-day length).` });
   return facts;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Zombie API endpoints. The report's total is Cloudflare's own label count whenever it was available (a real 0
+ * stays 0), so it is used as is. The report also carries a heuristic sample of possible examples; that list
+ * is never counted, because on a real zone it held 20 entries while the authoritative total was 0.
+ */
+export function zombieCount(ap: Record<string, unknown>): number {
+  const total = ap.apiZombieEndpointsTotalCount;
+  return typeof total === "number" && Number.isFinite(total) ? Math.max(0, total) : 0;
+}
 
 function section(id: SectionFacts["id"], title: string, facts: Fact[], empty: string): SectionFacts {
   return { id, title, facts, empty };
@@ -133,7 +159,7 @@ function recommendationFacts(recs: { priority: string; title: string; benefit?: 
 
 function finish(product: FactPack["product"], subject: string, period: string, parts: Record<"posture" | "risks" | "trends" | "actions", SectionFacts>, metrics: Record<string, number>, riskCodes: string[], days: number, generatedAt: string, comparison: Comparison | undefined): { pack: FactPack; snapshot: Snapshot } {
   // Recommendation-derived risks carry free text, so only fixed codes are stored for comparison.
-  const snapshot = snapshotFromFacts(metrics, riskCodes.filter(c => !c.startsWith("rec-") && c in RISK_LABELS), days, generatedAt);
+  const snapshot = snapshotFromFacts(metrics, riskCodes.filter(c => !c.startsWith("rec-") && c in RISK_LABELS), days, generatedAt, period);
   const sections = [parts.posture, parts.risks];
   if (comparison) sections.push(section("changes", TITLES.changes, changeFacts(snapshot, comparison), "No comparison with a previous report is available."));
   sections.push(parts.trends, parts.actions);
@@ -186,10 +212,13 @@ function threatInsight(ap: Record<string, unknown>, totalReqs: number): Fact[] {
     text: `Of ${fmt(evTotal)} security events on attack or likely-attack requests, ${fmt(evBlocked)} (${pctOf(evBlocked, evTotal)}) were blocked; the rest were logged, skipped or handled by other actions.` });
   const vec = ap.wafPerVectorScore as { scoredCount: number; avgSqliScore: number | null; avgXssScore: number | null; avgRceScore: number | null; avgPathTraversalScore: number | null } | undefined;
   if (vec && vec.scoredCount > 0) {
+    // The direction of this scale is easy to get backwards (99 is clean, 1 is an attack), so the reading is
+    // worked out here in code and stated next to every figure instead of being left to the writer.
+    const reading = (v: number): string => v >= 70 ? "looks clean" : v <= 30 ? "looks like an attack" : "is ambiguous";
     const parts = [["SQL injection", vec.avgSqliScore], ["cross-site scripting", vec.avgXssScore], ["remote code execution", vec.avgRceScore], ["path traversal", vec.avgPathTraversalScore]]
-      .filter((p): p is [string, number] => typeof p[1] === "number").map(([k, v]) => `${k} ${v}`);
+      .filter((p): p is [string, number] => typeof p[1] === "number").map(([k, v]) => `${k} ${v} (${reading(v)})`);
     if (parts.length) facts.push({ id: "in-wafvector", tag: "WAF score", severity: "info",
-      text: `Average per-attack-type scores across the ${fmt(vec.scoredCount)} requests that were not rated clean: ${parts.join(", ")}. A lower score means the request looks more like that attack, and 99 means it looks clean.` });
+      text: `Average per-attack-type scores across the ${fmt(vec.scoredCount)} requests that were not rated clean: ${parts.join(", ")}. On this scale 99 means a request looks clean and a low score means it looks like that attack.` });
   }
 
   // Rules: what the zone's own rules did.
@@ -219,6 +248,86 @@ function threatInsight(ap: Record<string, unknown>, totalReqs: number): Fact[] {
   return facts;
 }
 
+
+// ─── Trend topics: each gets its own short, verified narrative ────────────────
+
+/**
+ * Leaked-credential totals, recomputed from the raw per-result breakdown whenever it is present. Reports saved before the
+ * "none" row was excluded stored 77.8M breached logins for a zone with 3.3K real matches, and an archived or replayed
+ * report must not be able to repeat that. A breakdown is trusted over the stored totals.
+ */
+export function leakedFromBreakdown(l: { totalChecked?: number; breachedCount?: number; byResult?: { result: string; count: number }[] }): { totalChecked: number; breachedCount: number } {
+  const rows = arr<{ result: string; count: number }>(l.byResult);
+  if (!rows.length) return { totalChecked: num(l.totalChecked), breachedCount: num(l.breachedCount) };
+  const checked = rows.filter(r => r.result !== "none");
+  return {
+    totalChecked: checked.reduce((t, r) => t + num(r.count), 0),
+    breachedCount: checked.filter(r => LEAKED_CREDENTIAL_RESULTS.has(r.result)).reduce((t, r) => t + num(r.count), 0),
+  };
+}
+
+/** Groups the insight facts into topics, each with a plain-language guide for reading its metrics. */
+function trendTopics(ap: Record<string, unknown>, insight: Fact[], general: Fact[], totalReqs: number): TopicFacts[] {
+  const byId = (...ids: string[]): Fact[] => insight.filter(f => ids.includes(f.id));
+  const topics: TopicFacts[] = [];
+  const add = (id: string, title: string, guide: string, facts: Fact[]) => { if (facts.length) topics.push({ id, title, guide, facts }); };
+
+  add("bots", "Bots and automated traffic",
+    "Cloudflare gives each request a bot score from 1 to 99: 1 is definitely automated, 2 to 29 is likely automated, 30 to 99 is likely human. Many bots are wanted, such as search engines and monitoring, so a high automated share is not by itself a problem; what matters is whether the unwanted automation is being stopped. Verified bots are known, identified crawlers.",
+    byId("in-bots", "in-verified"));
+
+  // AI crawlers: operators and whether the zone has AI bot controls on.
+  const ai = ap.aiCrawlerSummary as { totalRequests?: number; blockedRequests?: number; allowedRequests?: number } | undefined;
+  const operators = new Map<string, number>();
+  for (const b of arr<{ operator?: string; requests: number }>(ap.aiCrawlerBots)) if (b.operator) operators.set(b.operator, (operators.get(b.operator) ?? 0) + num(b.requests));
+  const topOps = [...operators.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4);
+  const aiFacts = byId("in-ai");
+  if (aiFacts.length && topOps.length) aiFacts.push({ id: "in-ai-operators", tag: "AI crawlers", severity: "info", text: `By operator, the most active AI crawlers came from ${topOps.map(([name, n]) => `${cleanText(name, 30)} (${fmt(n)})`).join(", ")}.` });
+  const aiPaths = arr<{ path: string; requests: number }>(ap.aiCrawlerTopPaths).filter(p => !/\.(ico|png|jpg|jpeg|gif|svg|css|js|woff2?)$/i.test(p.path)).slice(0, 3);
+  if (aiFacts.length && aiPaths.length) aiFacts.push({ id: "in-ai-paths", tag: "AI crawlers", severity: "info", text: `The content AI crawlers requested most (excluding images and scripts) was ${aiPaths.map(p => `${cleanText(p.path, 60)} (${fmt(num(p.requests))})`).join(", ")}.` });
+  const bm = ap.botManagementConfig as Record<string, unknown> | null | undefined;
+  if (aiFacts.length && bm && typeof bm.ai_bots_protection === "string") {
+    const mode = bm.ai_bots_protection;
+    aiFacts.push({ id: "in-ai-setting", tag: "AI crawlers", severity: mode === "disabled" && num(ai?.allowedRequests) > num(ai?.blockedRequests) ? "medium" : "info",
+      text: `The zone's AI bot protection setting is ${cleanText(mode.replace(/_/g, " "), 30)}${mode === "disabled" ? ", so AI crawlers are managed only by whatever custom rules exist" : ""}.` });
+  }
+  add("ai", "Generative AI crawlers",
+    "AI crawlers fetch content to train models, power AI search, or answer users' questions. A 200 status means the crawler received the content, 403 means it was blocked, and other errors mean it was not served. Whether to allow them is a business decision; the useful questions are who is crawling, what they take, and whether the current choice is deliberate.",
+    aiFacts);
+
+  add("wafscore", "WAF attack score and rule outcomes",
+    "The WAF attack score is a machine-learning rating of every request, from 1 (almost certainly an attack) to 99 (clean), shown as classes: attack, likely attack, likely clean, clean. It is separate from the zone's own rules, so comparing the two shows whether the rules are catching what the model flags. A security event may be a block, a challenge, or only a log entry.",
+    [...byId("in-wafscore", "in-wafscore-actions", "in-wafvector", "in-outcomes"), ...byId("in-rules")]);
+
+  // What was targeted: top attacked paths, aggregated across hosts and actions.
+  const paths = new Map<string, number>();
+  for (const p of arr<{ path: string; count: number }>(ap.wafTopPaths)) paths.set(p.path, (paths.get(p.path) ?? 0) + num(p.count));
+  const topPaths = [...paths.entries()].sort((x, y) => y[1] - x[1]).slice(0, 4);
+  const targetFacts: Fact[] = [];
+  if (topPaths.length) targetFacts.push({ id: "in-targets", tag: "Targets", severity: "info", text: `The paths with the most blocked, challenged or logged requests were ${topPaths.map(([path, n]) => `${cleanText(path, 60)} (${fmt(n)})`).join(", ")}.` });
+  targetFacts.push(...general.filter(f => f.id === "t-classes"));
+  add("targets", "What was targeted",
+    "These are the URL paths where Cloudflare's security rules acted most. Busy booking, search and login paths often rank high because they are both valuable to attackers and heavily used by real customers, so a high count shows where rules are working, not that the path is unsafe. Attack categories are partly inferred from rule names, so treat them as a guide.",
+    targetFacts);
+
+  add("sources", "Where it came from",
+    "These are the countries and networks behind the most security events. A country or network appearing here means requests from it triggered rules; it does not mean every request from there is hostile. Large hosting or proxy networks often rank high because many customers share them.",
+    [...insight.filter(f => f.id === "in-asns"), ...general.filter(f => f.id === "t-countries")]);
+
+  const at = ap.accountTakeover as { totalRequests?: number; topPaths?: { path: string; requests: number }[] } | undefined;
+  const leakedRaw = ap.leakedCredentialCheck as { enabled?: boolean; totalChecked?: number; breachedCount?: number; byResult?: { result: string; count: number }[] } | undefined;
+  const leaked = leakedRaw ? { ...leakedRaw, ...leakedFromBreakdown(leakedRaw) } : undefined;
+  const acct: Fact[] = [];
+  if (num(at?.totalRequests) > 0) acct.push({ id: "in-ato", tag: "Accounts", severity: "high", text: `${fmt(num(at?.totalRequests))} requests were flagged as account-takeover signals${(at?.topPaths ?? []).length ? `, mostly on ${(at?.topPaths ?? []).slice(0, 3).map(p => `${cleanText(p.path, 50)} (${fmt(num(p.requests))})`).join(", ")}` : ""}.` });
+  if (leaked?.enabled && num(leaked.totalChecked) > 0) acct.push({ id: "in-leaked", tag: "Accounts", severity: num(leaked.breachedCount) > 0 ? "medium" : "info", text: `Of ${fmt(num(leaked.totalChecked))} login requests that carried credentials, ${fmt(num(leaked.breachedCount))} used credentials that appear in known data breaches. This can be a credential-stuffing attack or a real customer reusing an old password.` });
+  add("accounts", "Account abuse",
+    "Account-takeover signals and leaked-credential matches show attempts to log in with stolen or guessed credentials. A leaked-credential match is not proof of an attack: real customers also reuse breached passwords. Treat the counts as a measure of exposure on login paths.",
+    acct);
+
+  void totalReqs;
+  return topics;
+}
+
 // ─── AppSec ───────────────────────────────────────────────────────────────────
 
 export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: FactPack; snapshot: Snapshot } {
@@ -239,9 +348,12 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   const risky = arr<{ labels: string[] }>(ap.apiRiskyEndpoints).filter(e => e.labels.some(l => l.startsWith("cf-risk-bola"))).length;
   const riskLabels = arr<{ label: string; operationCount: number }>(ap.apiRiskLabels);
   const noAuth = num(riskLabels.find(r => r.label === "cf-risk-missing-auth")?.operationCount) + num(riskLabels.find(r => r.label === "cf-risk-mixed-auth")?.operationCount);
-  const zombies = num(ap.apiZombieEndpointsTotalCount) || arr(ap.apiZombieEndpoints).length;
+  const zombies = zombieCount(ap);
   const flagged = arr<{ js_integrity_score?: number; malware_score?: number }>(ap.pageShieldScripts).filter(x => (x.js_integrity_score ?? 100) < 30 || (x.malware_score ?? 100) < 30).length;
-  const rateRules = arr(ap.rateLimitRules).length, wafRulesets = arr(ap.wafManagedRules).length;
+  const wafRulesets = arr(ap.wafManagedRules).length;
+  const customRulesKnown = !(ap.errors as Record<string, string> | undefined)?.customWafRules;
+  const rl = rateLimitCoverage({ legacy: arr<{ enabled: boolean }>(ap.rateLimitRules), rules: arr<{ phase?: string; enabled: boolean; action?: string }>(ap.customWafRules) });
+  const rateRules = rl.active;
   const botPct = num(s.botTrafficPct);
   const recs = arr<{ priority: "high" | "medium" | "low"; title: string; benefit: string }>(ap.recommendations);
   const unavailable = Object.keys((ap.errors as Record<string, string> | undefined) ?? {}).length;
@@ -250,13 +362,20 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   const posture: Fact[] = [
     { id: "p-traffic", text: `${cleanText(meta.zoneName)} handled ${fmt(totalReqs)} requests and ${fmtBytes(num(s.totalBandwidthBytes))} of traffic through Cloudflare during the period, from ${fmt(num(s.uniqueVisitors))} unique visitors.` },
     { id: "p-blocked", text: `Cloudflare blocked or mitigated ${fmt(num(s.totalThreatsBlocked))} threats, which is ${pct(num(s.totalThreatsBlocked), totalReqs)}% of requests.` },
-    { id: "p-rules", text: `${wafRulesets} WAF ${plural(wafRulesets, "ruleset")} and ${rateRules} rate limiting ${plural(rateRules, "rule")} are configured.` },
+    { id: "p-rules", text: `${wafRulesets} WAF ${plural(wafRulesets, "ruleset")} are deployed${customRulesKnown ? ` and ${rl.active} rate limiting ${plural(rl.active, "rule")} are enabled${rl.active > 0 ? ` (${rl.enforcing} block or challenge${rl.logOnly ? `, ${rl.logOnly} only log` : ""})` : ""}` : ""}.` },
   ];
   if (dns && dns.totalRecords > 0) posture.push({ id: "p-dns", text: `${dns.proxiedCount} of ${dns.totalRecords} DNS records are proxied through Cloudflare (${dnsProxiedPct}%).` });
   if (certs.length) posture.push({ id: "p-certs", text: `${certs.length} ${plural(certs.length, "certificate")} ${plural(certs.length, "is", "are")} managed and ${expiring} expire within 30 days.` });
   if (tls13 !== undefined || alwaysHttps !== undefined) posture.push({ id: "p-tls", text: `TLS 1.3 is ${tls13 ? "enabled" : "not enabled"} and Always HTTPS is ${alwaysHttps ? "enforced" : "not enforced"}.` });
   posture.push({ id: "p-features", text: `Leaked Credential Check is ${leaked ? "enabled" : "not enabled"}, AI Security for Apps is ${aiSec ? "enabled" : "not enabled"}, and malicious upload scanning is ${scanning ? "enabled" : "not enabled"}.` });
-  posture.push({ id: "p-cache", text: `The cache hit rate was ${Math.round(num(s.cacheHitRatePct))}%.` });
+  const cacheMix = arr<{ status: string; requests: number; pct: number }>(ap.cacheStatusBreakdown);
+  const dynamic = cacheMix.find(c => c.status === "dynamic");
+  posture.push({ id: "p-cache", text: dynamic && dynamic.pct >= 80
+    ? `The cache hit rate was ${Math.round(num(s.cacheHitRatePct))}%, which is expected because ${dynamic.pct}% of requests are dynamic content that Cloudflare does not cache by default.`
+    : `The cache hit rate was ${Math.round(num(s.cacheHitRatePct))}%.` });
+  const zs = (ap.zoneSettings ?? {}) as Record<string, unknown>;
+  const minTls = typeof zs.min_tls_version === "string" ? zs.min_tls_version : undefined;
+  if (minTls) posture.push({ id: "p-mintls", text: `The minimum TLS version accepted is ${cleanText(minTls, 6)}.` });
   if (email?.grade) posture.push({ id: "p-email", text: `The email security grade for the domain is ${cleanText(email.grade, 3)}.` });
 
   const risks: Risk[] = [];
@@ -265,11 +384,12 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   if (noAuth > 0) risks.push({ code: "noauth", severity: "high", text: `${noAuth} API ${plural(noAuth, "endpoint")} ${plural(noAuth, "has", "have")} missing or inconsistent authentication on successful requests.` });
   if (expiring > 0) risks.push({ code: "certs", severity: "high", text: `${expiring} ${plural(expiring, "certificate")} will expire within 30 days.` });
   if (flagged > 0) risks.push({ code: "scripts", severity: "high", text: `Page Shield flagged ${flagged} suspicious ${plural(flagged, "script")}.` });
-  if (rateRules === 0) risks.push({ code: "ratelimit", severity: "medium", text: "No rate limiting rules are configured, so login and API endpoints have no request-rate protection." });
+  if (customRulesKnown && rl.total === 0) risks.push({ code: "ratelimit", severity: "medium", text: "No rate limiting rules are configured, so login and API endpoints have no request-rate protection." });
   if (email && (email.dmarcPolicy === "none" || email.dmarcPolicy === "")) risks.push({ code: "dmarc", severity: "medium", text: "The DMARC policy is set to none, which does not stop email spoofing of the domain." });
   if (!leaked) risks.push({ code: "leaked", severity: "medium", text: "Leaked Credential Check is not enabled, so logins using breached passwords are not flagged." });
   if (zombies > 0) risks.push({ code: "zombie", severity: "medium", text: `${zombies} zombie API ${plural(zombies, "endpoint")} with no recent traffic ${plural(zombies, "remains", "remain")} exposed.` });
   if (dns && dns.totalRecords > 0 && dnsProxiedPct < 60) risks.push({ code: "dnsproxy", severity: "medium", text: `Only ${dnsProxiedPct}% of DNS records are proxied, which leaves the rest exposed directly.` });
+  if (minTls && minTls !== "1.2" && minTls !== "1.3") risks.push({ code: "mintls", severity: "high", text: `The minimum TLS version is ${cleanText(minTls, 6)}, which accepts old protocol versions that are deprecated.` });
   if (tls13 === false) risks.push({ code: "tls13", severity: "low", text: "TLS 1.3 is not enabled." });
   if (alwaysHttps === false) risks.push({ code: "https", severity: "medium", text: "Always HTTPS is not enforced, so plain HTTP connections are possible." });
   if (!scanning) risks.push({ code: "upload", severity: "low", text: "Malicious upload scanning is not enabled for file uploads." });
@@ -282,7 +402,10 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   for (const e of arr<{ source: string; count: number }>(ap.securityEventsByService)) if (e.source && !["dlp", "sanitycheck", "unknown"].includes(e.source)) bySource.set(e.source, (bySource.get(e.source) ?? 0) + num(e.count));
   const services = [...bySource.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3);
   const countries = arr<{ countryName: string; count: number }>(ap.wafTopCountries).slice(0, 3);
-  const days = arr<{ date: string; block: number; challenge: number; managed_challenge: number }>(ap.wafTimeSeries).map(d => ({ date: d.date, n: num(d.block) + num(d.challenge) + num(d.managed_challenge) }));
+  // A daily series is only a "peak day" comparison when the report spans more than one local day. A one-day
+  // report in a non-UTC zone still has two UTC dates in its series, and comparing those halves is meaningless.
+  const dayBuckets = arr<{ date: string; block: number; challenge: number; managed_challenge: number }>(ap.wafTimeSeries).map(d => ({ date: d.date, n: num(d.block) + num(d.challenge) + num(d.managed_challenge) }));
+  const days = num(meta.days) > 1 ? dayBuckets : [];
   const peak = days.reduce<{ date: string; n: number } | null>((best, d) => !best || d.n > best.n ? d : best, null);
   const scored = arr<{ scoreClass: string; count: number }>(ap.wafScoreAllTraffic).filter(r => r.scoreClass === "attack").reduce((t, r) => t + num(r.count), 0);
   const crawler = ap.aiCrawlerSummary as { totalRequests: number; pctOfTotal: number; topBot: string | null } | undefined;
@@ -297,13 +420,16 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   // The AI-crawler and ML-score headlines now live in the insight facts below, with full context.
   void crawler; void scored;
   // Bot, AI crawler and WAF score insight leads, then the general attack facts.
-  trends.unshift(...threatInsight(ap, totalReqs));
+  const insightFacts = threatInsight(ap, totalReqs);
+  const generalFacts = [...trends];
+  trends.unshift(...insightFacts);
+  const topics = trendTopics(ap, insightFacts, generalFacts, totalReqs);
 
   const metrics = { totalRequests: totalReqs, threatsBlocked: num(s.totalThreatsBlocked), ddosMitigated: ddos, botTrafficPct: Math.round(botPct), cacheHitRatePct: Math.round(num(s.cacheHitRatePct)), accountTakeover: takeover, aiCrawlerRequests: num(crawler?.totalRequests), wafAttackRated: arr<{ scoreClass: string; count: number }>(ap.wafScoreAllTraffic).filter(r => r.scoreClass === "attack" || r.scoreClass === "likely_attack").reduce((t, r) => t + num(r.count), 0), dnsProxiedPct, expiringCerts: expiring, zombieApis: zombies, riskyApis: risky, highRecommendations: recs.filter(r => r.priority === "high").length };
   return finish("appsec", meta.zoneName, `${meta.periodLabel} (${meta.since} to ${meta.until})`, {
     posture: section("posture", TITLES.posture, posture, "No posture data was available."),
     risks: section("risks", TITLES.risks, riskFacts(risks, unavailable, "risks"), "No risk data was available."),
-    trends: section("trends", TITLES.trends, trends, "No attack activity or notable security events were recorded in the data retrieved for this period."),
+    trends: { ...section("trends", TITLES.trends, trends, "No attack activity or notable security events were recorded in the data retrieved for this period."), topics },
     actions: section("actions", TITLES.actions, recs.length ? recommendationFacts(recs) : [], "No recommended actions were generated for this period."),
   }, metrics, risks.map(r => r.code), num(meta.days), meta.generatedAt, comparison);
 }

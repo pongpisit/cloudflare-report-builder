@@ -10,6 +10,7 @@
 import type { AppSecData, ZeroTrustData } from "../types";
 import type { MagicTransitData } from "../../../../shared/magic-transit";
 import { creditLine, type ExecutiveSummary, type Severity } from "./exec-summary";
+import type { RadarResult } from "./radar-news";
 
 export function renderMtEmail(data: MagicTransitData, params: ReportEmailParams): RenderedEmail {
   const s = data.summary;
@@ -49,6 +50,8 @@ export interface ReportEmailParams {
   aiSummary: string;         // may be "" when Workers AI was unavailable
   /** Scheduled emails only: five-section executive summary that replaces the single AI block. */
   execSummary?: ExecutiveSummary;
+  /** Scheduled emails only: general vulnerability news from Cloudflare Radar Zero Wire. */
+  radar?: RadarResult;
 }
 
 export interface RenderedEmail {
@@ -161,19 +164,55 @@ function execSummaryBlock(summary: ExecutiveSummary): { html: string; text: stri
           const label = item.tag ? escapeHtml(item.tag) : sev.label;
           return `<tr><td valign="top" style="padding:4px 10px 4px 0;white-space:nowrap;font:bold 10px/1.6 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:1px;color:${sev.color};">${label}</td><td style="padding:4px 0;font:12px/1.6 Helvetica,Arial,sans-serif;color:#292b35;">${escapeHtml(item.text)}</td></tr>`;
         }).join("")}</table>` : "";
+    const topics = (section.topics ?? []).map(topic => `<div style="margin:12px 0 0;padding:10px 12px;background:#fafafa;border-left:3px solid #ba0816;">
+        <div style="font:bold 11px/1.4 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:1px;color:#1c1f2a;margin:0 0 4px;">${escapeHtml(topic.title)}</div>
+        <p style="margin:0 0 6px;font:13px/1.65 Georgia,serif;color:#292b35;">${escapeHtml(topic.body)}</p>
+        ${topic.source === "template" ? `<p style="margin:0;font:11px/1.55 Helvetica,Arial,sans-serif;color:#5d5e65;">${escapeHtml(topic.items.map(item => item.text).join(" "))}</p>` : ""}
+      </div>`).join("");
     return `<div style="margin:0 0 ${i === summary.sections.length - 1 ? 4 : 20}px;">
       <div style="font:bold 12px/1.4 Helvetica,Arial,sans-serif;color:#1c1f2a;margin:0 0 6px;">${i + 1}. ${escapeHtml(section.title)}</div>
-      <p style="margin:0 0 8px;font:13px/1.7 Georgia,serif;color:#292b35;">${escapeHtml(section.body)}</p>${items}
+      <p style="margin:0 0 8px;font:13px/1.7 Georgia,serif;color:#292b35;">${escapeHtml(section.body)}</p>${items}${topics}
     </div>`;
   }).join("\n");
   const credit = creditLine(summary);
   const htmlFull = `${html}${credit ? `<p style="margin:14px 0 0;font:11px/1.6 Helvetica,Arial,sans-serif;color:#5d5e65;">${escapeHtml(credit)}</p>` : ""}`;
-  const text = summary.sections.map((section, i) => `${i + 1}. ${section.title}\n${section.body}${section.items.length ? `\n${section.items.map(item => `  [${item.tag ?? SEVERITY_STYLE[item.severity ?? "info"].label}] ${item.text}`).join("\n")}` : ""}`).join("\n\n");
+  const text = summary.sections.map((section, i) => `${i + 1}. ${section.title}\n${section.body}${(section.topics ?? []).map(t => `\n\n  ${t.title.toUpperCase()}\n  ${t.body}${t.source === "template" ? `\n  ${t.items.map(i => i.text).join(" ")}` : ""}`).join("")}${section.items.length ? `\n${section.items.map(item => `  [${item.tag ?? SEVERITY_STYLE[item.severity ?? "info"].label}] ${item.text}`).join("\n")}` : ""}`).join("\n\n");
   return { html: htmlFull, text: `${text}${credit ? `\n\n${credit}` : ""}` };
 }
 
+
+const RADAR_INTRO = "General security news from Cloudflare Radar Zero Wire. These briefings are not specific to your environment: check whether you run the affected software before acting.";
+
+/** General (not site-specific) vulnerability news. Every field is escaped; links go only to radar.cloudflare.com. */
+function radarBlock(radar: RadarResult | undefined): { html: string; text: string } {
+  if (!radar) return { html: "", text: "" };
+  if (!radar.ok) {
+    return {
+      html: `<div style="margin:22px 0 0;padding-top:16px;border-top:1px solid #e2e2e2;"><div style="font:bold 12px/1.4 Helvetica,Arial,sans-serif;color:#1c1f2a;margin:0 0 6px;">General security news</div><p style="margin:0;font:12px/1.6 Helvetica,Arial,sans-serif;color:#5d5e65;">Cloudflare Radar Zero Wire could not be reached for this report (${escapeHtml(radar.reason)}). Your report data above is not affected.</p></div>`,
+      text: `GENERAL SECURITY NEWS\nCloudflare Radar Zero Wire could not be reached for this report (${radar.reason}). Your report data above is not affected.`,
+    };
+  }
+  const html = radar.briefings.map(b => {
+    const meta = [b.label, `Published ${b.published}`, b.reviewed && b.reviewed !== b.published ? `reviewed ${b.reviewed}` : "", ...b.cves].filter(Boolean).join(" · ");
+    return `<div style="margin:0 0 14px;">
+      <div style="font:bold 12px/1.5 Helvetica,Arial,sans-serif;color:#1c1f2a;"><a href="${escapeHtml(b.url)}" style="color:#1c1f2a;text-decoration:underline;">${escapeHtml(b.title)}</a></div>
+      <div style="font:11px/1.6 Helvetica,Arial,sans-serif;color:#ba0816;margin:2px 0 4px;">${escapeHtml(meta)}</div>
+      <p style="margin:0 0 4px;font:12px/1.6 Helvetica,Arial,sans-serif;color:#292b35;">${escapeHtml(b.summary)}</p>
+      <p style="margin:0;font:12px/1.6 Helvetica,Arial,sans-serif;color:#292b35;"><strong>What to do:</strong> ${escapeHtml(b.action)}</p>${b.coverage ? `
+      <p style="margin:4px 0 0;font:12px/1.6 Helvetica,Arial,sans-serif;color:#5d5e65;"><strong>Cloudflare coverage:</strong> ${escapeHtml(b.coverage)}</p>` : ""}
+    </div>`;
+  }).join("");
+  const text = radar.briefings.map(b => `- ${b.title} (${[b.label, `published ${b.published}`, ...b.cves].filter(Boolean).join(", ")})\n  ${b.summary}\n  What to do: ${b.action}${b.coverage ? `\n  Cloudflare coverage: ${b.coverage}` : ""}\n  ${b.url}`).join("\n");
+  return {
+    html: `<div style="margin:22px 0 0;padding-top:16px;border-top:1px solid #e2e2e2;"><div style="font:bold 12px/1.4 Helvetica,Arial,sans-serif;color:#1c1f2a;margin:0 0 4px;">General security news</div><p style="margin:0 0 12px;font:11px/1.6 Helvetica,Arial,sans-serif;color:#5d5e65;">${escapeHtml(RADAR_INTRO)}</p>${html}</div>`,
+    text: `GENERAL SECURITY NEWS\n${RADAR_INTRO}\n${text}`,
+  };
+}
+
 function summaryFor(p: ReportEmailParams): { html: string; text: string } {
-  return p.execSummary ? execSummaryBlock(p.execSummary) : summaryParagraphs(p.aiSummary);
+  if (!p.execSummary) return summaryParagraphs(p.aiSummary);
+  const exec = execSummaryBlock(p.execSummary), news = radarBlock(p.radar);
+  return { html: `${exec.html}${news.html}`, text: news.text ? `${exec.text}\n\n${news.text}` : exec.text };
 }
 
 function summaryParagraphs(aiSummary: string): { html: string; text: string } {  const paras = aiSummary

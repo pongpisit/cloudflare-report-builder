@@ -1176,6 +1176,8 @@ export interface AppSecData extends Record<string, any> {
   apiUseCaseLabels: { label: string; operationCount: number; requests: number }[];
   apiZombieEndpoints: { operationId: string; method: string; endpoint: string; host: string; lastUpdated: string; requestsTotal: number }[];
   apiZombieEndpointsTotalCount: number;
+  /** True when the count is Cloudflare's own label count (a real 0 is then a real 0). Absent in older reports. */
+  apiZombieCountIsAuthoritative?: boolean;
   apiRiskyEndpoints: { operationId: string; method: string; endpoint: string; host: string; labels: string[] }[];
   apiOperationsTotalCount: number;
   discoveryPendingReviewCount: number;

@@ -26,6 +26,7 @@ import { handleListZones } from "./routes/list-zones";
 import { handleAuditSave, handleAuditList, handleAuditGet } from "./routes/audit";
 import { handleFetchZeroTrust } from "./routes/fetch-zerotrust";
 import { handleZTSummary } from "./routes/ai-zt-summary";
+import { handleAppsecSummary } from "./routes/appsec-summary";
 import { handleFetchMagicTransit } from "./routes/fetch-magic-transit";
 import { handleMtSummary } from "./routes/ai-magic-transit-summary";
 import { handleFetchCustomDashboard } from "./routes/fetch-custom-dashboard";
@@ -175,6 +176,8 @@ app.post("/api/custom-dashboard/dashboards", (c, next) => applyRateLimit(c, next
 // Expensive routes — rate limited
 app.post("/api/appsec", (c, next) => applyRateLimit(c, next), handleFetchAppsec);
 app.post("/api/summary", (c, next) => applyRateLimit(c, next), handleAiSummary);
+// The structured summary used by the scheduled email, for the on-demand AppSec report (5 sections + Radar news).
+app.post("/api/appsec-summary", (c, next) => applyRateLimit(c, next), handleAppsecSummary);
 
 // Audit routes — R2 storage
 app.post("/api/audit",      handleAuditSave);

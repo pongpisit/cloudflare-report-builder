@@ -2,7 +2,7 @@ import { CheckCircle } from "lucide-react";
 
 /** Structured scheduled-email summary, carried inside the embedded report payload. */
 export interface ExecSummaryPayload {
-  sections: { id: string; title: string; body: string; items: { text: string; severity?: string; tag?: string }[] }[];
+  sections: { id: string; title: string; body: string; items: { text: string; severity?: string; tag?: string }[]; topics?: { id: string; title: string; body: string; items: { text: string; severity?: string; tag?: string }[] }[] }[];
   credit: string;
 }
 
@@ -27,6 +27,11 @@ export default function ExecSummarySections({ summary, compact = false }: { summ
         return <div key={section.id} data-section={section.id} className="rounded-xl border-l-4 px-4 py-3 print:rounded-none print:border-l-4 print:px-5 print:py-4" style={{ borderColor: accent.color, backgroundColor: accent.bg, breakInside: "avoid" }}>
           <p className="text-[10px] font-black uppercase tracking-widest mb-1.5 print:text-[8pt] print:mb-2" style={{ color: accent.color }}>{i + 1}. {section.title}</p>
           <p className={`leading-relaxed ${compact ? "text-[13px]" : "text-sm"} print:text-[10.5pt] print:leading-relaxed`} style={{ color: "#374151" }}>{section.body}</p>
+          {(section.topics ?? []).map(topic => <div key={topic.id} data-topic={topic.id} className="mt-3 rounded-lg px-3 py-2" style={{ backgroundColor: "rgba(255,255,255,.65)", borderLeft: `3px solid ${accent.color}`, breakInside: "avoid" }}>
+            <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: accent.color }}>{topic.title}</p>
+            <p className="text-[13px] leading-relaxed" style={{ color: "#374151" }}>{topic.body}</p>
+            <ul className="mt-1.5 space-y-0.5" style={{ listStyle: "none", padding: 0 }}>{topic.items.map((item, k) => <li key={k} className="text-[11px]" style={{ display: "flex", gap: 8, color: "#6b7280" }}><strong style={{ textTransform: "uppercase", letterSpacing: ".06em", fontSize: 9, minWidth: 74 }}>{item.tag}</strong><span>{item.text}</span></li>)}</ul>
+          </div>)}
           {section.items.length > 0 && <ul className="mt-2 space-y-1" style={{ listStyle: "none", padding: 0 }}>
             {section.items.map((item, k) => {
               const sev = SEVERITY[item.severity ?? "info"] ?? SEVERITY.info;

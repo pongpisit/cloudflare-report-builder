@@ -31,7 +31,7 @@ export interface EmbeddedReportPayload {
   input: Record<string, unknown>;
   aiSummary?: string;
   /** Titled sections from the scheduled email summary (real titles, not position labels). */
-  execSummary?: { sections: { id: string; title: string; body: string; items: { text: string; severity?: string; tag?: string }[] }[]; credit: string };
+  execSummary?: { sections: { id: string; title: string; body: string; items: { text: string; severity?: string; tag?: string }[]; topics?: { id: string; title: string; body: string; items: { text: string; severity?: string; tag?: string }[] }[] }[]; credit: string };
   generatedAt: string;
   scheduleName: string;
 }

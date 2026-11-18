@@ -14,15 +14,15 @@ export async function loadPreviousSnapshot(db: D1Database | undefined, scheduleI
   if (!db) return { ok: false, previous: null };
   try {
     const row = await db.prepare(
-      `SELECT generated_at, days, metrics_json, risks_json FROM exec_report_snapshots
+      `SELECT generated_at, days, metrics_json, risks_json, period FROM exec_report_snapshots
         WHERE schedule_id = ? AND product = ? ORDER BY generated_at DESC LIMIT 1`
-    ).bind(scheduleId, product).first<{ generated_at: string; days: number; metrics_json: string; risks_json: string }>();
+    ).bind(scheduleId, product).first<{ generated_at: string; days: number; metrics_json: string; risks_json: string; period: string | null }>();
     if (!row) return { ok: true, previous: null };
     const metrics = JSON.parse(row.metrics_json) as Record<string, unknown>;
     const risks = JSON.parse(row.risks_json) as unknown;
     const clean: Record<string, number> = {};
     for (const [k, v] of Object.entries(metrics)) if (typeof v === "number" && Number.isFinite(v)) clean[k] = v;
-    return { ok: true, previous: { generatedAt: row.generated_at, days: row.days, metrics: clean, risks: Array.isArray(risks) ? risks.filter((r): r is string => typeof r === "string") : [] } };
+    return { ok: true, previous: { generatedAt: row.generated_at, days: row.days, metrics: clean, risks: Array.isArray(risks) ? risks.filter((r): r is string => typeof r === "string") : [], period: row.period ?? undefined } };
   } catch (e) {
     console.warn("[exec-snapshots] load failed:", e instanceof Error ? e.name : "error");
     return { ok: false, previous: null };
@@ -34,9 +34,9 @@ export async function saveSnapshot(db: D1Database | undefined, scheduleId: strin
   if (!db) return;
   try {
     await db.prepare(
-      `INSERT INTO exec_report_snapshots (id, schedule_id, product, generated_at, days, metrics_json, risks_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(crypto.randomUUID(), scheduleId, product, snapshot.generatedAt, snapshot.days, JSON.stringify(snapshot.metrics), JSON.stringify(snapshot.risks)).run();
+      `INSERT INTO exec_report_snapshots (id, schedule_id, product, generated_at, days, metrics_json, risks_json, period)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(crypto.randomUUID(), scheduleId, product, snapshot.generatedAt, snapshot.days, JSON.stringify(snapshot.metrics), JSON.stringify(snapshot.risks), snapshot.period ?? null).run();
     await db.prepare(
       `DELETE FROM exec_report_snapshots WHERE schedule_id = ? AND id NOT IN (
          SELECT id FROM exec_report_snapshots WHERE schedule_id = ? ORDER BY generated_at DESC LIMIT ?)`

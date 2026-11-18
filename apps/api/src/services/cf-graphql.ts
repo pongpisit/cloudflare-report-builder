@@ -3396,15 +3396,16 @@ export interface WafAttackCategory {
 }
 
 const WAF_ATTACK_PATTERNS: Array<{ category: string; patterns: RegExp[] }> = [
-  { category: "SQL Injection",          patterns: [/sql/i, /sqli/i] },
+  { category: "SQL Injection",          patterns: [/\bsql/i, /\bsqli\b/i] },
   { category: "Cross-Site Scripting",   patterns: [/xss/i, /cross.?site/i, /html injection/i] },
-  { category: "Path Traversal",         patterns: [/traversal/i, /directory/i, /relative path/i, /multiple slash/i] },
+  { category: "Path Traversal",         patterns: [/traversal/i, /\.\.\//, /relative path/i, /multiple slash/i] },
   { category: "CVE Exploits",           patterns: [/cve[:-]/i] },
   { category: "Vulnerability Scanning", patterns: [/scanner/i, /probe/i, /vulnerability/i] },
   { category: "Fake Bot",               patterns: [/fake.*bot/i, /fake.*google/i, /fake.*bing/i] },
   { category: "Header Anomaly",         patterns: [/anomaly:header/i, /missing or empty/i, /header/i] },
   { category: "File Inclusion",         patterns: [/file inclusion/i, /dangerous file/i] },
-  { category: "Command Injection",      patterns: [/command injection/i, /rce/i, /code injection/i] },
+  // Whole-word match: /rce/ alone also matches "resource" and "force", which misfiled content-scraping rules.
+  { category: "Command Injection",      patterns: [/command injection/i, /\brce\b/i, /code injection/i] },
   { category: "API Protection",         patterns: [/schema validation/i, /api shield/i] },
 ];
 
@@ -3433,6 +3434,11 @@ const CATEGORY_TAG_LABELS: Record<string, string> = {
 
 function formatCategoryTag(tag: string): string {
   return CATEGORY_TAG_LABELS[tag] ?? tag.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+/** Exposed so the category rules can be tested against real rule names without a network call. */
+export function classifyWafEventForTest(description: string): { category: string; classifiedBy: "cloudflare-tag" | "heuristic" } {
+  return classifyWafEvent(description, "firewallCustom", undefined, undefined);
 }
 
 function classifyWafEvent(
