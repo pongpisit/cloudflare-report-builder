@@ -42,6 +42,7 @@ export interface Comparison { previous: Snapshot | null }
 
 /** Human labels for stable metric keys and risk codes (also used for risks that no longer apply). */
 const METRIC_LABELS: Record<string, string> = {
+  aiCrawlerRequests: "AI crawler requests", wafAttackRated: "Requests rated attack or likely attack by the WAF score",
   totalRequests: "Total requests", threatsBlocked: "Threats blocked", ddosMitigated: "DDoS-mitigated requests",
   botTrafficPct: "Automated traffic share (%)", cacheHitRatePct: "Cache hit rate (%)", accountTakeover: "Account-takeover signals",
   dnsProxiedPct: "Proxied DNS records (%)", expiringCerts: "Certificates expiring within 30 days", zombieApis: "Zombie API endpoints",
@@ -72,7 +73,7 @@ function changeFacts(current: Snapshot, comparison: Comparison): Fact[] {
   if (!prev) return [{ id: "ch-first", text: "This is the first report with comparison enabled, so there is no earlier report to compare against." }];
   const date = prev.generatedAt.slice(0, 10);
   if (prev.days !== current.days) {
-    return [{ id: "ch-days", text: `The previous report (generated ${date}) covered ${prev.days} ${plural(prev.days, "day")} and this one covers ${current.days} ${plural(current.days, "day")}, so their figures are not compared.` }];
+    return [{ id: "ch-days", text: `The previous report (sent on ${date}) covered ${prev.days} ${plural(prev.days, "day")} and this one covers ${current.days} ${plural(current.days, "day")}, so their figures are not compared.` }];
   }
   const facts: Fact[] = [];
   for (const [key, now] of Object.entries(current.metrics)) {
@@ -93,8 +94,8 @@ function changeFacts(current: Snapshot, comparison: Comparison): Fact[] {
   const prevRisks = new Set(prev.risks), nowRisks = new Set(current.risks);
   for (const code of nowRisks) if (!prevRisks.has(code)) facts.push({ id: `ch-new-${code}`, severity: "high", text: `New since the previous report: ${RISK_LABELS[code] ?? code}.` });
   for (const code of prevRisks) if (!nowRisks.has(code)) facts.push({ id: `ch-gone-${code}`, severity: "info", text: `No longer present since the previous report: ${RISK_LABELS[code] ?? code}.` });
-  if (!facts.length) facts.push({ id: "ch-none", text: `Compared with the previous report generated ${date}, no tracked figure moved by 10% or more and no risk appeared or cleared.` });
-  else facts.unshift({ id: "ch-ref", text: `Compared with the previous report generated ${date} (same ${current.days}-day length).` });
+  if (!facts.length) facts.push({ id: "ch-none", text: `Compared with the previous report sent on ${date}, no tracked figure moved by 10% or more and no risk appeared or cleared.` });
+  else facts.unshift({ id: "ch-ref", text: `Compared with the previous report sent on ${date} (same ${current.days}-day length).` });
   return facts;
 }
 
@@ -137,6 +138,85 @@ function finish(product: FactPack["product"], subject: string, period: string, p
   if (comparison) sections.push(section("changes", TITLES.changes, changeFacts(snapshot, comparison), "No comparison with a previous report is available."));
   sections.push(parts.trends, parts.actions);
   return { pack: { product, subject: cleanText(subject, 120), period: cleanText(period, 120), sections }, snapshot };
+}
+
+
+// ─── Threat insight (bots, AI, WAF score, rules, sources) ─────────────────────
+
+const OUTCOME_ACTIONS = new Set(["block", "challenge", "managed_challenge", "js_challenge", "legacy_challenge", "interactive_challenge", "challenge_solved"]);
+const pctOf = (part: number, total: number): string => total > 0 ? `${Math.round(part / total * 1000) / 10}%` : "0%";
+const clean = (v: unknown, n = 60): string => cleanText(v, n);
+
+/** Extra, precisely worded threat context. Every sentence states what the metric does and does not mean. */
+function threatInsight(ap: Record<string, unknown>, totalReqs: number): Fact[] {
+  const facts: Fact[] = [];
+
+  // Bots: the score bands are Cloudflare's own (1 automated, 2-29 likely automated, 30-99 likely human).
+  const bands = arr<{ scoreRange: string; requests: number }>(ap.botScoreBreakdown);
+  const s = ap.summary as { automatedPct?: number; likelyAutomatedPct?: number; humanPct?: number } | undefined;
+  const automated = bands.find(b => /Score 1\)/.test(b.scoreRange)), likely = bands.find(b => /Score 2/.test(b.scoreRange)), human = bands.find(b => /Score 30/.test(b.scoreRange));
+  if (automated && likely && human) {
+    facts.push({ id: "in-bots", tag: "Bots", severity: num(s?.automatedPct) + num(s?.likelyAutomatedPct) > 30 ? "medium" : "info",
+      text: `By bot score, ${fmt(num(automated.requests))} requests (${Math.round(num(s?.automatedPct))}%) were definitely automated, ${fmt(num(likely.requests))} (${Math.round(num(s?.likelyAutomatedPct))}%) were likely automated and ${fmt(num(human.requests))} (${Math.round(num(s?.humanPct))}%) were likely human.` });
+  }
+  const verified = arr<{ category: string; count: number }>(ap.verifiedBotCategories).slice(0, 4);
+  const verifiedTotal = arr<{ count: number }>(ap.verifiedBotCategories).reduce((t, v) => t + num(v.count), 0);
+  if (verified.length) facts.push({ id: "in-verified", tag: "Bots", severity: "info",
+    text: `Verified bots made ${fmt(verifiedTotal)} requests; the largest categories were ${verified.map(v => `${clean(v.category, 40)} (${fmt(num(v.count))})`).join(", ")}. Verified bots are known, identified crawlers and are not attacks by themselves.` });
+
+  // AI crawlers: allowed vs blocked, using the AI Crawl Control split of response status.
+  const ai = ap.aiCrawlerSummary as { totalRequests: number; pctOfTotal: number; uniqueBots: number; topBot: string | null; allowedRequests: number; blockedRequests: number; paymentRequiredRequests: number; otherErrorRequests: number; categoryBreakdown?: { category: string; requests: number }[] } | undefined;
+  if (ai && ai.totalRequests > 0) {
+    const cats = (ai.categoryBreakdown ?? []).slice(0, 3).map(c => `${clean(c.category, 30)} (${fmt(num(c.requests))})`).join(", ");
+    facts.push({ id: "in-ai", tag: "AI crawlers", severity: ai.pctOfTotal > 5 && ai.blockedRequests < ai.allowedRequests ? "medium" : "info",
+      text: `${ai.uniqueBots} generative AI crawlers made ${fmt(ai.totalRequests)} requests (${ai.pctOfTotal}% of traffic)${ai.topBot ? `, led by ${clean(ai.topBot, 40)}` : ""}${cats ? `; by type: ${cats}` : ""}. Of these, ${fmt(ai.allowedRequests)} received a successful response, ${fmt(ai.blockedRequests)} were blocked with a 403${ai.paymentRequiredRequests ? `, ${fmt(ai.paymentRequiredRequests)} were asked to pay with a 402` : ""} and ${fmt(ai.otherErrorRequests)} ended in another error.` });
+  }
+
+  // WAF attack score: ML classification of ALL traffic, separate from rule-based events.
+  const score = arr<{ scoreClass: string; count: number }>(ap.wafScoreAllTraffic);
+  const byClass = (c: string) => score.filter(r => r.scoreClass === c).reduce((t, r) => t + num(r.count), 0);
+  const attack = byClass("attack"), likelyAttack = byClass("likely_attack"), scoredTotal = score.filter(r => r.scoreClass !== "not_scored").reduce((t, r) => t + num(r.count), 0);
+  if (scoredTotal > 0) facts.push({ id: "in-wafscore", tag: "WAF score", severity: attack > 0 ? "medium" : "info",
+    text: `The WAF attack score rated ${fmt(attack)} requests as attacks and ${fmt(likelyAttack)} as likely attacks out of ${fmt(scoredTotal)} scored requests (${pctOf(attack + likelyAttack, scoredTotal)}). This is a machine-learning rating of all traffic, separate from the rule-based security events.` });
+  const events = arr<{ scoreClass: string; action: string; count: number }>(ap.wafAttackScoreBreakdown);
+  const evAttack = events.filter(r => r.scoreClass === "attack" || r.scoreClass === "likely_attack");
+  const evTotal = evAttack.reduce((t, r) => t + num(r.count), 0);
+  const evBlocked = evAttack.filter(r => r.action === "block").reduce((t, r) => t + num(r.count), 0);
+  if (evTotal > 0) facts.push({ id: "in-wafscore-actions", tag: "WAF score", severity: "info",
+    text: `Of ${fmt(evTotal)} security events on attack or likely-attack requests, ${fmt(evBlocked)} (${pctOf(evBlocked, evTotal)}) were blocked; the rest were logged, skipped or handled by other actions.` });
+  const vec = ap.wafPerVectorScore as { scoredCount: number; avgSqliScore: number | null; avgXssScore: number | null; avgRceScore: number | null; avgPathTraversalScore: number | null } | undefined;
+  if (vec && vec.scoredCount > 0) {
+    const parts = [["SQL injection", vec.avgSqliScore], ["cross-site scripting", vec.avgXssScore], ["remote code execution", vec.avgRceScore], ["path traversal", vec.avgPathTraversalScore]]
+      .filter((p): p is [string, number] => typeof p[1] === "number").map(([k, v]) => `${k} ${v}`);
+    if (parts.length) facts.push({ id: "in-wafvector", tag: "WAF score", severity: "info",
+      text: `Average per-attack-type scores across the ${fmt(vec.scoredCount)} requests that were not rated clean: ${parts.join(", ")}. A lower score means the request looks more like that attack, and 99 means it looks clean.` });
+  }
+
+  // Rules: what the zone's own rules did.
+  const rules = arr<{ description: string; totalHits: number; blocks: number; challenges: number; blockRate: number }>(ap.wafRuleEffectiveness).slice(0, 3);
+  if (rules.length) facts.push({ id: "in-rules", tag: "WAF rules", severity: "info",
+    text: `The most active rules were ${rules.map(r => `"${clean(r.description, 70)}" (${fmt(num(r.totalHits))} hits, ${Math.round(num(r.blockRate))}% blocked)`).join("; ")}.` });
+
+  // Sources: where the unwanted traffic came from.
+  const asns = arr<{ asnName: string; count: number }>(ap.topThreatAsns).slice(0, 3);
+  if (asns.length) facts.push({ id: "in-asns", tag: "Sources", severity: "info",
+    text: `The networks behind the most blocked or challenged requests were ${asns.map(a => `${clean(a.asnName, 40)} (${fmt(num(a.count))})`).join(", ")}. A network appearing here does not mean the whole network is malicious.` });
+
+  // Outcome mix: how the edge dealt with the unwanted traffic.
+  const svc = arr<{ action: string; count: number }>(ap.securityEventsByService);
+  const outcomeTotal = svc.reduce((t, e) => t + num(e.count), 0);
+  const act = (name: string) => svc.filter(e => e.action === name).reduce((t, e) => t + num(e.count), 0);
+  const blocked = act("block"), challenged = act("managed_challenge") + act("challenge") + act("js_challenge");
+  if (outcomeTotal > 0 && blocked + challenged > 0) facts.push({ id: "in-outcomes", tag: "Edge actions", severity: "info",
+    text: `Of ${fmt(outcomeTotal)} security events, ${fmt(blocked)} were blocks and ${fmt(challenged)} were challenges; the remainder were logged, skipped or other actions.` });
+
+  // Origin health seen from the edge.
+  const st = ap.httpStatusSummary as { e4xx: number; e5xx: number; total: number } | undefined;
+  if (st && st.total > 0) facts.push({ id: "in-status", tag: "Responses", severity: num(st.e5xx) / st.total > 0.02 ? "medium" : "info",
+    text: `Of ${fmt(st.total)} responses, ${fmt(num(st.e4xx))} (${pctOf(num(st.e4xx), st.total)}) were client errors and ${fmt(num(st.e5xx))} (${pctOf(num(st.e5xx), st.total)}) were server errors.` });
+
+  void totalReqs; void OUTCOME_ACTIONS;
+  return facts;
 }
 
 // ─── AppSec ───────────────────────────────────────────────────────────────────
@@ -208,16 +288,18 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   const crawler = ap.aiCrawlerSummary as { totalRequests: number; pctOfTotal: number; topBot: string | null } | undefined;
 
   const trends: Fact[] = [];
-  if (topRule) trends.push({ id: "t-rule", text: `The most active WAF rule was "${cleanText(topRule.ruleName ?? topRule.description ?? topRule.ruleId)}" with ${fmt(num(topRule.count))} events, action ${cleanText(topRule.action, 24)}.` });
-  if (classes.length) trends.push({ id: "t-classes", text: `Top attack categories: ${classes.map(c => `${cleanText(c.category, 40)} (${fmt(num(c.count))})`).join(", ")}.` });
-  if (ddos > 0) trends.push({ id: "t-ddos", text: `${fmt(ddos)} layer 7 DDoS requests were mitigated${vectors[0] ? `, led by ${cleanText(vectors[0].vector, 50)} (${fmt(num(vectors[0].count))})` : ""}.` });
-  if (services.length) trends.push({ id: "t-services", text: `Security events by service: ${services.map(([k, v]) => `${cleanText(k, 40)} (${fmt(v)})`).join(", ")}.` });
-  if (countries.length) trends.push({ id: "t-countries", text: `Most blocked traffic originated from ${countries.map(c => `${cleanText(c.countryName, 40)} (${fmt(num(c.count))})`).join(", ")}.` });
-  if (peak && peak.n > 0 && days.length > 1) trends.push({ id: "t-peak", text: `The busiest day for blocked or challenged requests was ${peak.date} with ${fmt(peak.n)} events.` });
-  if (scored > 0) trends.push({ id: "t-ml", text: `${fmt(scored)} requests were scored as attacks by the WAF machine learning score.` });
-  if (crawler && crawler.totalRequests > 0) trends.push({ id: "t-ai", text: `Generative AI crawlers made ${fmt(crawler.totalRequests)} requests (${crawler.pctOfTotal}% of traffic)${crawler.topBot ? `, led by ${cleanText(crawler.topBot, 40)}` : ""}.` });
+  if (topRule) trends.push({ id: "t-rule", tag: "WAF rules", text: `The most active WAF rule was "${cleanText(topRule.ruleName ?? topRule.description ?? topRule.ruleId)}" with ${fmt(num(topRule.count))} events, action ${cleanText(topRule.action, 24)}.` });
+  if (classes.length) trends.push({ id: "t-classes", tag: "Attack types", text: `Top attack categories: ${classes.map(c => `${cleanText(c.category, 40)} (${fmt(num(c.count))})`).join(", ")}.` });
+  if (ddos > 0) trends.push({ id: "t-ddos", tag: "DDoS", text: `${fmt(ddos)} layer 7 DDoS requests were mitigated${vectors[0] ? `, led by ${cleanText(vectors[0].vector, 50)} (${fmt(num(vectors[0].count))})` : ""}.` });
+  if (services.length) trends.push({ id: "t-services", tag: "Security events", text: `Security events by service: ${services.map(([k, v]) => `${cleanText(k, 40)} (${fmt(v)})`).join(", ")}.` });
+  if (countries.length) trends.push({ id: "t-countries", tag: "Countries", text: `Most blocked traffic originated from ${countries.map(c => `${cleanText(c.countryName, 40)} (${fmt(num(c.count))})`).join(", ")}.` });
+  if (peak && peak.n > 0 && days.length > 1) trends.push({ id: "t-peak", tag: "Peak day", text: `The busiest day for blocked or challenged requests was ${peak.date} with ${fmt(peak.n)} events.` });
+  // The AI-crawler and ML-score headlines now live in the insight facts below, with full context.
+  void crawler; void scored;
+  // Bot, AI crawler and WAF score insight leads, then the general attack facts.
+  trends.unshift(...threatInsight(ap, totalReqs));
 
-  const metrics = { totalRequests: totalReqs, threatsBlocked: num(s.totalThreatsBlocked), ddosMitigated: ddos, botTrafficPct: Math.round(botPct), cacheHitRatePct: Math.round(num(s.cacheHitRatePct)), accountTakeover: takeover, dnsProxiedPct, expiringCerts: expiring, zombieApis: zombies, riskyApis: risky, highRecommendations: recs.filter(r => r.priority === "high").length };
+  const metrics = { totalRequests: totalReqs, threatsBlocked: num(s.totalThreatsBlocked), ddosMitigated: ddos, botTrafficPct: Math.round(botPct), cacheHitRatePct: Math.round(num(s.cacheHitRatePct)), accountTakeover: takeover, aiCrawlerRequests: num(crawler?.totalRequests), wafAttackRated: arr<{ scoreClass: string; count: number }>(ap.wafScoreAllTraffic).filter(r => r.scoreClass === "attack" || r.scoreClass === "likely_attack").reduce((t, r) => t + num(r.count), 0), dnsProxiedPct, expiringCerts: expiring, zombieApis: zombies, riskyApis: risky, highRecommendations: recs.filter(r => r.priority === "high").length };
   return finish("appsec", meta.zoneName, `${meta.periodLabel} (${meta.since} to ${meta.until})`, {
     posture: section("posture", TITLES.posture, posture, "No posture data was available."),
     risks: section("risks", TITLES.risks, riskFacts(risks, unavailable, "risks"), "No risk data was available."),
@@ -265,6 +347,16 @@ export function zeroTrustFactPack(z: ZeroTrustData, comparison?: Comparison): { 
   if (num(s.blockedAuthEvents) > 0) trends.push({ id: "t-auth", text: `${fmt(num(s.blockedAuthEvents))} Access login attempts were blocked.` });
   if (num(s.shadowItAppsDiscovered) > 0) trends.push({ id: "t-shadow", text: `${num(s.shadowItAppsDiscovered)} shadow IT applications were discovered${apps.length ? `, led by ${apps.map(a => `${cleanText(a.name, 40)} (${fmt(num(a.count))})`).join(", ")}` : ""}.` });
   if (dlpHits > 0) trends.push({ id: "t-dlp", text: `DLP matched ${fmt(dlpHits)} items across ${fmt(num(z.dlpActivitySummary?.scanCount))} scanned requests or files.` });
+  const blockedUsers = arr<{ count: number }>(z.accessTopBlockedUsers);
+  if (blockedUsers.length) trends.push({ id: "in-blockedusers", tag: "Access", severity: "info", text: `${blockedUsers.length} users had blocked Access attempts, together ${fmt(blockedUsers.reduce((t, u) => t + num(u.count), 0))} attempts.` });
+  const gen = z.aiAppUsage;
+  if (gen && gen.totalRequests > 0) {
+    const top = gen.apps.slice(0, 3).map(a => `${cleanText(a.name, 40)} (${fmt(num(a.count))})`).join(", ");
+    trends.push({ id: "in-genai", tag: "Generative AI", severity: gen.hasGovernancePolicy ? "info" : "medium",
+      text: `${gen.uniqueUsers} users made ${fmt(gen.totalRequests)} requests to ${gen.uniqueApps} generative AI applications${top ? `, led by ${top}` : ""}. ${gen.hasGovernancePolicy ? "A Gateway policy governs this use." : "No Gateway policy governs this use."}` });
+  }
+  const catHigh = arr<{ severity: string; count: number }>(z.casbFindingsBySeverity).filter(c => ["critical", "high"].includes(String(c.severity).toLowerCase())).reduce((t, c) => t + num(c.count), 0);
+  if (catHigh > 0) trends.push({ id: "in-casb", tag: "CASB", severity: "medium", text: `${catHigh} SaaS posture findings were rated critical or high.` });
   const changes = arr(z.configChanges).length;
   if (changes > 0) trends.push({ id: "t-config", text: `${changes} Zero Trust configuration ${plural(changes, "change was", "changes were")} recorded in the audit log.` });
 
@@ -327,6 +419,11 @@ export function magicTransitFactPack(m: MagicTransitData, comparison?: Compariso
   if (countries.length) trends.push({ id: "t-countries", text: `Mitigated attack traffic came mostly from ${countries.map(c => `${cleanText(c.name, 30)} (${fmtBytes(c.bits / 8)})`).join(", ")}.` });
   if (systems.length) trends.push({ id: "t-systems", text: `Dropped traffic by mitigation system: ${systems.map(x => `${cleanText(x.name, 40)} (${fmtBytes(x.bits / 8)})`).join(", ")}.` });
   if (s.peakBps !== null) trends.push({ id: "t-peak", text: `Peak ingress was ${fmt(s.peakBps)} bits per second, measured as an average over each ${m.meta.bucketSeconds}-second bucket.` });
+  const protoTotal = m.protocolPorts.reduce((t, p) => t + p.bits, 0);
+  const topProto = new Map<string, number>();
+  for (const p of m.protocolPorts) topProto.set(p.protocol, (topProto.get(p.protocol) ?? 0) + p.bits);
+  const protoRank = [...topProto.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3);
+  if (protoTotal > 0 && protoRank.length) trends.push({ id: "in-protocols", tag: "Protocols", severity: "info", text: `By protocol, ${protoRank.map(([name, bits]) => `${cleanText(name, 20)} carried ${pct(bits, protoTotal)}%`).join(", ")} of the measured ingress volume.` });
   const prev = bytes(s.previousTraffic?.bits);
   if (traffic !== null && prev !== null && prev > 0) trends.push({ id: "t-prior", text: `Ingress traffic was ${fmtBytes(traffic)} against ${fmtBytes(prev)} in the immediately preceding period of equal length.` });
 

@@ -352,7 +352,7 @@ export async function runSchedule(
           data: appsec ?? zt ?? mt ?? dashboard,
           input: inputForEmbedded,
           aiSummary,
-          execSummary: execSummary ? { sections: execSummary.sections.map(x => ({ id: x.id, title: x.title, body: x.body, items: x.items.map(i => ({ text: i.text, severity: i.severity })) })), credit: creditLine(execSummary) } : undefined,
+          execSummary: execSummary ? { sections: execSummary.sections.map(x => ({ id: x.id, title: x.title, body: x.body, items: x.items.map(i => ({ text: i.text, severity: i.severity, tag: i.tag })) })), credit: creditLine(execSummary) } : undefined,
           generatedAt: (appsec?.meta?.generatedAt ?? zt?.meta?.generatedAt ?? mt?.meta.generatedAt) ?? new Date().toISOString(),
           scheduleName: row.name,
         },

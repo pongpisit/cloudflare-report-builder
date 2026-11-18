@@ -369,6 +369,8 @@ export interface AppSecData {
     totalChecked: number;
     breachedCount: number;
     byResult: { result: string; count: number }[];
+    /** Requests with no credentials to check; not breached. Absent in older archived reports. */
+    noCredentialRequests?: number;
   };
   contentScanning?: {
     enabled: boolean;

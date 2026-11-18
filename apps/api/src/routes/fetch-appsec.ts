@@ -656,7 +656,7 @@ export async function generateAppsecData(input: {
     injectionScoreBands: { high: 0, moderate: 0, low: 0 }, avgInjectionScore: null as number | null,
   });
   const leakedCredentialResults = safeGet(leakedCredentialResultsR, "leakedCredentialResults", {
-    totalChecked: 0, byResult: [] as Array<{ result: string; count: number }>, breachedCount: 0,
+    totalChecked: 0, byResult: [] as Array<{ result: string; count: number }>, breachedCount: 0, noCredentialRequests: 0,
   });
   const contentScanResults = safeGet(contentScanResultsR, "contentScanResults", {
     totalScannedRequests: 0, requestsWithMaliciousObject: 0, scanFailedCount: 0, objResultsBreakdown: [] as Array<{ result: string; count: number }>,
@@ -2117,6 +2117,7 @@ export async function generateAppsecData(input: {
       totalChecked: leakedCredentialResults.totalChecked,
       breachedCount: leakedCredentialResults.breachedCount,
       byResult: leakedCredentialResults.byResult,
+      noCredentialRequests: leakedCredentialResults.noCredentialRequests,
     },
     contentScanning: {
       enabled: contentScanningStatusRaw?.value === "on",

@@ -2,7 +2,7 @@ import { CheckCircle } from "lucide-react";
 
 /** Structured scheduled-email summary, carried inside the embedded report payload. */
 export interface ExecSummaryPayload {
-  sections: { id: string; title: string; body: string; items: { text: string; severity?: string }[] }[];
+  sections: { id: string; title: string; body: string; items: { text: string; severity?: string; tag?: string }[] }[];
   credit: string;
 }
 
@@ -31,7 +31,7 @@ export default function ExecSummarySections({ summary, compact = false }: { summ
             {section.items.map((item, k) => {
               const sev = SEVERITY[item.severity ?? "info"] ?? SEVERITY.info;
               return <li key={k} className="text-xs print:text-[9pt]" style={{ display: "flex", gap: 8 }}>
-                <strong style={{ color: sev.color, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10, minWidth: 54 }}>{sev.label}</strong>
+                <strong style={{ color: sev.color, textTransform: "uppercase", letterSpacing: ".06em", fontSize: 10, minWidth: 74 }}>{item.tag ?? sev.label}</strong>
                 <span style={{ color: "#374151" }}>{item.text}</span>
               </li>;
             })}

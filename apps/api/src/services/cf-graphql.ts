@@ -3747,10 +3747,17 @@ export async function fetchAiSecurityDetections(
  * https://developers.cloudflare.com/logs/logpush/logpush-job/datasets/zone/http_requests/#leakedcredentialcheckresult
  */
 export interface LeakedCredentialCheckResults {
+  /** Requests that actually carried credentials and were checked (clean + leaked variants). */
   totalChecked: number;
   byResult: Array<{ result: string; count: number }>;
-  breachedCount: number; // any non-"clean" result
+  /** Requests whose credentials matched a known breach (the documented leaked variants only). */
+  breachedCount: number;
+  /** Requests with no credentials to check (result "none"); neither clean nor breached. */
+  noCredentialRequests: number;
 }
+
+/** Documented leaked results. "none" (no credentials in the request) and "clean" are NOT breaches. */
+export const LEAKED_CREDENTIAL_RESULTS = new Set(["password_leaked", "username_and_password_leaked", "username_password_similar", "username_leaked"]);
 
 export async function fetchLeakedCredentialCheckResults(
   token: string, zoneId: string, since: string, until: string
@@ -3788,10 +3795,14 @@ export async function fetchLeakedCredentialCheckResults(
     .filter((r) => r.result)
     .sort((a, b) => b.count - a.count);
 
+  // Observed live: the overwhelming majority of rows are "none" (no credentials in the request).
+  // Counting those as breached once reported 77.8M "breached" logins on a zone with 3.3K real matches.
+  const checked = byResult.filter((r) => r.result !== "none");
   return {
-    totalChecked: byResult.reduce((s, r) => s + r.count, 0),
-    byResult,
-    breachedCount: byResult.filter((r) => r.result !== "clean").reduce((s, r) => s + r.count, 0),
+    totalChecked: checked.reduce((s, r) => s + r.count, 0),
+    byResult: checked,
+    breachedCount: checked.filter((r) => LEAKED_CREDENTIAL_RESULTS.has(r.result)).reduce((s, r) => s + r.count, 0),
+    noCredentialRequests: byResult.filter((r) => r.result === "none").reduce((s, r) => s + r.count, 0),
   };
 }
 

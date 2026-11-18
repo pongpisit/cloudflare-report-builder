@@ -158,7 +158,8 @@ function execSummaryBlock(summary: ExecutiveSummary): { html: string; text: stri
     const items = section.items.length
       ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:4px 0 0;">${section.items.map(item => {
           const sev = SEVERITY_STYLE[item.severity ?? "info"];
-          return `<tr><td valign="top" style="padding:4px 10px 4px 0;white-space:nowrap;font:bold 10px/1.6 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:1px;color:${sev.color};">${sev.label}</td><td style="padding:4px 0;font:12px/1.6 Helvetica,Arial,sans-serif;color:#292b35;">${escapeHtml(item.text)}</td></tr>`;
+          const label = item.tag ? escapeHtml(item.tag) : sev.label;
+          return `<tr><td valign="top" style="padding:4px 10px 4px 0;white-space:nowrap;font:bold 10px/1.6 Helvetica,Arial,sans-serif;text-transform:uppercase;letter-spacing:1px;color:${sev.color};">${label}</td><td style="padding:4px 0;font:12px/1.6 Helvetica,Arial,sans-serif;color:#292b35;">${escapeHtml(item.text)}</td></tr>`;
         }).join("")}</table>` : "";
     return `<div style="margin:0 0 ${i === summary.sections.length - 1 ? 4 : 20}px;">
       <div style="font:bold 12px/1.4 Helvetica,Arial,sans-serif;color:#1c1f2a;margin:0 0 6px;">${i + 1}. ${escapeHtml(section.title)}</div>
@@ -167,7 +168,7 @@ function execSummaryBlock(summary: ExecutiveSummary): { html: string; text: stri
   }).join("\n");
   const credit = creditLine(summary);
   const htmlFull = `${html}${credit ? `<p style="margin:14px 0 0;font:11px/1.6 Helvetica,Arial,sans-serif;color:#5d5e65;">${escapeHtml(credit)}</p>` : ""}`;
-  const text = summary.sections.map((section, i) => `${i + 1}. ${section.title}\n${section.body}${section.items.length ? `\n${section.items.map(item => `  [${SEVERITY_STYLE[item.severity ?? "info"].label}] ${item.text}`).join("\n")}` : ""}`).join("\n\n");
+  const text = summary.sections.map((section, i) => `${i + 1}. ${section.title}\n${section.body}${section.items.length ? `\n${section.items.map(item => `  [${item.tag ?? SEVERITY_STYLE[item.severity ?? "info"].label}] ${item.text}`).join("\n")}` : ""}`).join("\n\n");
   return { html: htmlFull, text: `${text}${credit ? `\n\n${credit}` : ""}` };
 }
 

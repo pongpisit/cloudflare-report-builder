@@ -158,6 +158,7 @@ export default function SuspiciousActivitySection({ data }: Props) {
                     </div>
                   ))}
                 </div>
+                {typeof leakedCredCheck.noCredentialRequests === "number" && leakedCredCheck.noCredentialRequests > 0 && <p className="text-[10px] text-cf-gray-400 mt-2">{formatNumber(leakedCredCheck.noCredentialRequests)} other requests carried no credentials to check and are not counted.</p>}
                 <p className="text-[10px] text-cf-gray-400 mt-2">{leakedCredCheck.customDetections} custom detection location{leakedCredCheck.customDetections === 1 ? "" : "s"} configured</p>
               </>
             ) : leakedCredCheck.enabled ? (
