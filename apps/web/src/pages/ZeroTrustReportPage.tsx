@@ -2,6 +2,7 @@
  * ZeroTrustReportPage — Cloudflare One (Zero Trust / SASE) POC or Assessment Report.
  * Assembles 17 sections covering Access, Gateway, WARP, Tunnels, DLP.
  */
+import ExecSummarySections, { embeddedExecSummary } from "../components/ExecSummarySections";
 import { useState, useEffect } from "react";
 import {
   Printer, RefreshCw, Shield, Clock, Globe, User,
@@ -77,6 +78,7 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
   // Embedded (scheduled attachment) mode: summary generated at send time,
   // no backend to call.
   const EMBEDDED = (window as { __EMBEDDED_REPORT__?: { aiSummary?: string } }).__EMBEDDED_REPORT__;
+  const embeddedSummary = embeddedExecSummary();
   useEffect(() => {
     if (EMBEDDED) { setAiSummary(EMBEDDED.aiSummary ?? ""); return; }
     generateSummary();
@@ -347,7 +349,8 @@ export default function ZeroTrustReportPage({ data, input, onReset, userEmail }:
           </div>
           {aiLoading && <div className="flex items-center gap-3 py-8 text-cf-gray-400"><Loader2 size={18} className="animate-spin text-blue-600"/><span className="text-sm">Writing executive summary…</span></div>}
           {aiError && <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-lg p-3"><AlertCircle size={16} className="text-red-500 flex-shrink-0 mt-0.5"/><div><p className="text-sm font-medium text-red-700">AI summary unavailable</p><p className="text-xs text-red-600 mt-0.5">{aiError}</p></div></div>}
-          {aiSummary && !aiLoading && (
+          {embeddedSummary && <ExecSummarySections summary={embeddedSummary} />}
+          {!embeddedSummary && aiSummary && !aiLoading && (
             <div>
               <div className="space-y-5">
                 {aiSummary.split("\n\n").filter(Boolean).map((para, i) => {

@@ -1,3 +1,4 @@
+import ExecSummarySections, { embeddedExecSummary } from "../components/ExecSummarySections";
 import { useEffect, useId, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Printer, FileText, RefreshCw, Loader2, CheckCircle } from "lucide-react";
@@ -67,6 +68,7 @@ function change(value: number | null | undefined, baseline: number | null | unde
 
 export default function MagicTransitReportPage({ data, input, onReset, userEmail }: { data: MagicTransitData; input: ReportInput; onReset: () => void; userEmail?: string | null }) {
   const embedded = (window as { __EMBEDDED_REPORT__?: { aiSummary?: string } }).__EMBEDDED_REPORT__;
+  const embeddedSummary = embeddedExecSummary();
   const [summary, setSummary] = useState(embedded?.aiSummary ?? "");
   const [busy, setBusy] = useState(!embedded);
   const [summaryError, setSummaryError] = useState("");
@@ -158,7 +160,7 @@ export default function MagicTransitReportPage({ data, input, onReset, userEmail
         <p className="mt-caption">Each ranking shows up to 25 returned categories. These are selected-period DDoS mitigation volumes, separate from all-traffic rankings and attack-event lifetime totals.</p>
       </Panel>
       <Panel title="Executive assessment" subtitle="AI narrative grounded in the report measurements">
-        {busy ? <p className="mt-empty">Preparing the executive assessment…</p> : summary ? <div className="mt-summary">{summary.split(/\n\s*\n/).filter(Boolean).map((p, i) => <p key={i}>{p}</p>)}</div> : <p className="mt-empty">{summaryError || "No AI narrative was included. Use the measurements and evidence below."}</p>}
+        {embeddedSummary ? <ExecSummarySections summary={embeddedSummary} compact /> : busy ? <p className="mt-empty">Preparing the executive assessment…</p> : summary ? <div className="mt-summary">{summary.split(/\n\s*\n/).filter(Boolean).map((p, i) => <p key={i}>{p}</p>)}</div> : <p className="mt-empty">{summaryError || "No AI narrative was included. Use the measurements and evidence below."}</p>}
       </Panel>
       <Panel id="mt-traffic" title="Traffic pulse" subtitle="Aligned ingress measurements · estimates from sampled network analytics">
         {times.length ? <><HorizonChart series={horizon} title="Network pulse" dateFormat={meta.days === 1 ? "MMM d HH:mm" : "MMM d"} />

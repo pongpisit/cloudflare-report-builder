@@ -2,11 +2,13 @@ import { test, expect } from "@playwright/test";
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
+import { buildEmbeddedReportAttachment } from "../../apps/api/src/services/attachment-builder";
 import { appsecExample, zeroTrustExample } from "../../scripts/example-fixtures";
 import { fixture as mtFixture } from "../magic-transit/fixture";
 import { appsecFactPack, zeroTrustFactPack, magicTransitFactPack, type Comparison } from "../../apps/api/src/services/exec-facts";
-import { buildExecutiveSummary, verifyText, numbersIn, creditLine, auditRecord, SECTION_MODELS, EDITOR_MODEL, SEVERITY_MODEL } from "../../apps/api/src/services/exec-summary";
+import { buildExecutiveSummary, verifyText, numbersIn, creditLine, auditRecord, execSummaryParagraphs, SECTION_MODELS, EDITOR_MODEL, SEVERITY_MODEL } from "../../apps/api/src/services/exec-summary";
 import { loadPreviousSnapshot, saveSnapshot, deleteSnapshots } from "../../apps/api/src/services/exec-snapshots";
 import { renderAppsecEmail } from "../../apps/api/src/services/email-template";
 import { runSchedule } from "../../apps/api/src/scheduler";
@@ -372,4 +374,73 @@ test("request options match what was measured live: non-thinking mode for Qwen a
   expect(seen["@cf/zai-org/glm-5.3-flash"].chat_template_kwargs).toBeUndefined();
   expect(seen["@cf/openai/gpt-oss-120b"].chat_template_kwargs).toBeUndefined();
   expect((seen[SEVERITY_MODEL] as { model: string }).model).toBe("clef-flash");
+});
+
+// ─── Attachment shows real section titles (not position-based labels) ─────────
+
+const OLD_LABELS = ["Traffic & Protection", "What's Working Well", "What Needs Attention", "Performance & Cost Value", "Recommended Next Steps", "Identity & Access", "Gateway Filtering", "Device & Connectivity", "Risks & Gaps", "Overall Posture & Outlook"];
+
+async function renderAttachment(page: import("@playwright/test").Page, kind: "appsec" | "zero-trust" | "magic-transit", withExec: boolean) {
+  const built = kind === "appsec" ? appsecFactPack(appsec(), { previous: null }) : kind === "zero-trust" ? zeroTrustFactPack(zt(), { previous: null }) : magicTransitFactPack(mtFixture(), { previous: null });
+  const data = kind === "appsec" ? appsecExample() : kind === "zero-trust" ? zeroTrustExample() : mtFixture();
+  const { ai } = fakeAi(call => call.model === SEVERITY_MODEL ? { answers: {} } : call.system.includes("final editor") ? { response: "no" } : { response: proseFor(call.user) });
+  const summary = await buildExecutiveSummary({ AI: ai } as never, built.pack, false);
+  const html = await buildEmbeddedReportAttachment({ ASSETS: { fetch: async (request: Request) => new Response(await readFile(`apps/web/dist/static-report/${request.url.endsWith(".js") ? "app.js" : "app.css"}`, "utf8")) } } as never, {
+    kind, data, input: { token: "", zoneId: "", accountId: "0".repeat(32), product: kind, isPoc: false } as never,
+    aiSummary: execSummaryParagraphs(summary),
+    ...(withExec ? { execSummary: { sections: summary.sections.map(s => ({ id: s.id, title: s.title, body: s.body, items: s.items })), credit: creditLine(summary) } } : {}),
+    generatedAt: "2026-09-02T00:00:00Z", scheduleName: "Synthetic",
+  }, "Synthetic report");
+  expect(html).toBeTruthy();
+  const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
+  const requests: string[] = [];
+  await page.route("**/*", route => { const url = route.request().url(); if (new URL(url).pathname === "/attachment") return route.fulfill({ contentType: "text/html", body: html! }); requests.push(url); return route.abort(); });
+  await page.goto("/attachment");
+  return { summary, errors, requests };
+}
+
+for (const kind of ["appsec", "zero-trust", "magic-transit"] as const) {
+  test(`${kind} attachment shows the real section titles and credit, never position-based labels`, async ({ page }) => {
+    const { summary, errors, requests } = await renderAttachment(page, kind, true);
+    const box = page.getByTestId("exec-summary");
+    await expect(box).toBeVisible();
+    for (const [i, section] of summary.sections.entries()) {
+      const card = box.locator(`[data-section="${section.id}"]`);
+      await expect(card).toContainText(`${i + 1}. ${section.title}`);
+      await expect(card).toContainText(section.body.slice(0, 40));
+    }
+    await expect(box.locator("[data-section]")).toHaveCount(5);
+    await expect(box).toContainText("Written with Cloudflare Workers AI");
+    const text = await box.innerText();
+    for (const label of OLD_LABELS) expect(text).not.toContain(label.toUpperCase());
+    expect(requests).toEqual([]); expect(errors).toEqual([]);
+  });
+}
+
+test("attachments without titled sections (older reports, opted-out paths) keep the original paragraph layout", async ({ page }) => {
+  const { requests, errors } = await renderAttachment(page, "appsec", false);
+  await expect(page.getByTestId("exec-summary")).toHaveCount(0);
+  await expect(page.getByText("Traffic & Protection", { exact: false }).first()).toBeVisible();
+  expect(requests).toEqual([]); expect(errors).toEqual([]);
+});
+
+test("a scheduled run puts titled sections in the attachment payload, with no customer data beyond the report itself", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response("{}", { status: 500 });
+  try {
+    const sends: { attachments: { content: string }[] }[] = [];
+    const db = database(), inner = binding(db);
+    const env = { DB: inner, CF_API_TOKEN: "synthetic-token", CF_ACCOUNT_ID: "2".repeat(32), EMAIL_FROM: "reports@example.com",
+      AI: { run: async () => { throw new Error("Synthetic AI unavailable"); } },
+      ASSETS: { fetch: async (req: Request) => new Response(req.url.endsWith(".js") ? `const root=1;${" ".repeat(11000)}` : "body{}") },
+      EMAIL: { send: async (payload: { attachments: { content: string }[] }) => { sends.push(payload); return { messageId: "m" }; } },
+      AUDIT_BUCKET: { put: async () => {} } };
+    db.prepare("INSERT INTO schedules(id,name,report_type,zone_id,zone_name,days,tz_offset,frequency,recipients,subject,created_at,updated_at,compare_previous,range_mode,period) VALUES('s','S','appsec','z','e.com',1,0,'daily','[\"r@example.com\"]','S','2026-09-01','2026-09-01',0,'period','yesterday')").run();
+    expect((await runSchedule(env as never, db.prepare("SELECT * FROM schedules WHERE id='s'").get() as never, "manual")).ok).toBe(true);
+    const html = sends[0].attachments[0].content;
+    expect(html).toContain('"execSummary"');
+    expect(html).toContain("Overall protected attack surface and security posture");
+    expect(html).not.toContain("Changes since the previous report");
+    expect(html).not.toContain("synthetic-token");
+  } finally { globalThis.fetch = original; }
 });

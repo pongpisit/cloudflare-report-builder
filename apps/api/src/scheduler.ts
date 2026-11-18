@@ -21,7 +21,7 @@ import type { Env, ScheduleRow } from "./types";
 import { generateAppsecData } from "./routes/fetch-appsec";
 import { generateZerotrustData } from "./routes/fetch-zerotrust";
 import { generateMagicTransitData } from "./routes/fetch-magic-transit";
-import { buildExecutiveSummary, auditRecord, execSummaryParagraphs, type ExecutiveSummary } from "./services/exec-summary";
+import { buildExecutiveSummary, auditRecord, creditLine, execSummaryParagraphs, type ExecutiveSummary } from "./services/exec-summary";
 import { appsecFactPack, zeroTrustFactPack, magicTransitFactPack, type Comparison, type Snapshot } from "./services/exec-facts";
 import { loadPreviousSnapshot, saveSnapshot as saveExecSnapshot } from "./services/exec-snapshots";
 import {
@@ -352,6 +352,7 @@ export async function runSchedule(
           data: appsec ?? zt ?? mt ?? dashboard,
           input: inputForEmbedded,
           aiSummary,
+          execSummary: execSummary ? { sections: execSummary.sections.map(x => ({ id: x.id, title: x.title, body: x.body, items: x.items.map(i => ({ text: i.text, severity: i.severity })) })), credit: creditLine(execSummary) } : undefined,
           generatedAt: (appsec?.meta?.generatedAt ?? zt?.meta?.generatedAt ?? mt?.meta.generatedAt) ?? new Date().toISOString(),
           scheduleName: row.name,
         },

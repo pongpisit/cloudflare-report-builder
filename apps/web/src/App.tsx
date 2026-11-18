@@ -25,6 +25,8 @@ export interface EmbeddedReport {
   data: unknown;
   input: ReportInput;
   aiSummary?: string;
+  /** Scheduled emails: titled sections shown instead of position-labelled paragraphs. */
+  execSummary?: import("./components/ExecSummarySections").ExecSummaryPayload;
   generatedAt: string;
   scheduleName: string;
 }
