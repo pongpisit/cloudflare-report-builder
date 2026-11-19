@@ -107,7 +107,9 @@ function buildPrompt(appsec: AppSecData, isPoc: boolean): { system: string; user
   const topRuleLabel    = topRule
     ? `"${topRule.ruleName ?? topRule.description ?? topRule.ruleId}" (${formatNum(topRule.count)} events, ${topRule.action}, source: ${SOURCE_LABEL[topRule.source ?? ""] ?? topRule.source})`
     : "no events";
-  const wafRulesCount   = ap["wafManagedRules"] as unknown[] | undefined ?? [];
+  // Managed rulesets only (the list also holds DDoS, rate-limit and cache objects); custom rules are counted separately.
+  const wafRulesCount   = ((ap["wafManagedRules"] as Array<{ phase?: string; name?: string }> | undefined) ?? [])
+    .filter(r => /firewall_managed$/.test(r.phase ?? "") && r.name !== "default");
   const rateLimitRules  = ap["rateLimitRules"] as unknown[] | undefined ?? [];
   const wafAttackClassification = ap["wafAttackClassification"] as Array<{ category: string; count: number }> | undefined ?? [];
 

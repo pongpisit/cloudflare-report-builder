@@ -619,7 +619,7 @@ test("rate limiting is counted from the rulesets phase as well as the legacy API
 
   const text = allText(realShapeZone());
   expect(text).not.toContain("No rate limiting rules are configured");
-  expect(text).toContain("43 rate limiting rules are enabled (34 block or challenge, 9 only log)");
+  expect(text).toContain("43 rate limiting rules enabled (34 block or challenge, 9 only log)");
   const risks = appsecFactPack(realShapeZone()).pack.sections.find(s => s.id === "risks")!.facts.map(f => f.id);
   expect(risks).not.toContain("risk-ratelimit");
   const recs = (realShapeZone() as unknown as { recommendations: { title: string }[] }).recommendations;
@@ -635,7 +635,7 @@ test("a zone with truly no rate limiting still gets the finding, but never when 
   unreadable.errors = { customWafRules: "Could not list the zone's rulesets" };
   const facts = appsecFactPack(unreadable as never).pack.sections.flatMap(s => s.facts);
   expect(facts.map(f => f.id)).not.toContain("risk-ratelimit");
-  expect(facts.map(f => f.text).join(" ")).not.toMatch(/rate limiting rule/);
+  expect(facts.map(f => f.text).join(" ")).not.toMatch(/\b0 rate limiting|no rate limiting/);
   expect(facts.some(f => f.id === "risk-unavailable")).toBe(true);
 });
 
@@ -982,4 +982,27 @@ test("the previous period is named as a date range, not as a label with its rang
   const text = appsecFactPack(threatZone(), { previous }).pack.sections.find(s => s.id === "changes")!.facts.map(f => f.text).join(" ");
   expect(text).toContain("Compared with the period 2026-11-16 (same 7-day length)");
   expect(text).not.toContain("Nov 16, 2026");
+});
+
+test("WAF rule counts match the zone: managed rulesets and custom rules are counted separately, DDoS and rate-limit objects are not rulesets", () => {
+  const z = threatZone() as unknown as Record<string, unknown>;
+  z.wafManagedRules = [
+    { id: "a", name: "Cloudflare OWASP Core Ruleset", phase: "http_request_firewall_managed", enabled: true },
+    { id: "b", name: "Cloudflare Managed Ruleset", phase: "http_request_firewall_managed", enabled: true },
+    { id: "c", name: "DDoS L7 ruleset", phase: "ddos_l7", enabled: true },
+    { id: "d", name: "default", phase: "http_ratelimit", enabled: true },
+    { id: "e", name: "default", phase: "http_request_cache_settings", enabled: true },
+    { id: "f", name: "default", phase: "http_request_firewall_managed", enabled: true },
+  ];
+  z.rateLimitRules = [];
+  z.customWafRules = [
+    ...Array.from({ length: 3 }, (_, i) => ({ id: `c${i}`, phase: "http_request_firewall_custom", enabled: true })),
+    { id: "off", phase: "http_request_firewall_custom", enabled: false },
+    ...Array.from({ length: 2 }, (_, i) => ({ id: `r${i}`, phase: "http_ratelimit", enabled: true, action: "block" })),
+  ];
+  const text = appsecFactPack(z as never).pack.sections.find(s => s.id === "posture")!.facts.find(f => f.id === "p-rules")!.text;
+  expect(text).toContain("2 managed WAF rulesets are deployed");
+  expect(text).toContain("with 3 custom WAF rules enabled");
+  expect(text).toContain("and 2 rate limiting rules enabled (2 block or challenge)");
+  expect(text).not.toMatch(/\b6 WAF|\b\d+ WAF rulesets? (are|is) deployed/);
 });

@@ -350,8 +350,16 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   const noAuth = num(riskLabels.find(r => r.label === "cf-risk-missing-auth")?.operationCount) + num(riskLabels.find(r => r.label === "cf-risk-mixed-auth")?.operationCount);
   const zombies = zombieCount(ap);
   const flagged = arr<{ js_integrity_score?: number; malware_score?: number }>(ap.pageShieldScripts).filter(x => (x.js_integrity_score ?? 100) < 30 || (x.malware_score ?? 100) < 30).length;
-  const wafRulesets = arr(ap.wafManagedRules).length;
+  // "WAF rules" means two different things in the dashboard, so they are counted separately:
+  //  - managed rulesets: Cloudflare-deployed packages (OWASP Core, Cloudflare Managed, ...). Ruleset objects in the
+  //    list also include DDoS, rate-limit, cache and entrypoint objects, which are not WAF rulesets and are excluded.
+  //  - custom WAF rules: the enabled rules in the firewall custom phase, which is where most rules are written.
+  const MANAGED_WAF_PHASES = new Set(["http_request_firewall_managed", "http_response_firewall_managed"]);
+  const managedWafRulesets = arr<{ name?: string; phase?: string }>(ap.wafManagedRules)
+    .filter(r => MANAGED_WAF_PHASES.has(r.phase ?? "") && r.name !== "default" && !/^entrypoint/i.test(r.name ?? "")).length;
   const customRulesKnown = !(ap.errors as Record<string, string> | undefined)?.customWafRules;
+  const customWafEnabled = arr<{ phase?: string; enabled: boolean }>(ap.customWafRules)
+    .filter(r => r.phase === "http_request_firewall_custom" && r.enabled).length;
   const rl = rateLimitCoverage({ legacy: arr<{ enabled: boolean }>(ap.rateLimitRules), rules: arr<{ phase?: string; enabled: boolean; action?: string }>(ap.customWafRules) });
   const rateRules = rl.active;
   const botPct = num(s.botTrafficPct);
@@ -362,7 +370,9 @@ export function appsecFactPack(a: AppSecData, comparison?: Comparison): { pack: 
   const posture: Fact[] = [
     { id: "p-traffic", text: `${cleanText(meta.zoneName)} handled ${fmt(totalReqs)} requests and ${fmtBytes(num(s.totalBandwidthBytes))} of traffic through Cloudflare during the period, from ${fmt(num(s.uniqueVisitors))} unique visitors.` },
     { id: "p-blocked", text: `Cloudflare blocked or mitigated ${fmt(num(s.totalThreatsBlocked))} threats, which is ${pct(num(s.totalThreatsBlocked), totalReqs)}% of requests.` },
-    { id: "p-rules", text: `${wafRulesets} WAF ${plural(wafRulesets, "ruleset")} are deployed${customRulesKnown ? ` and ${rl.active} rate limiting ${plural(rl.active, "rule")} are enabled${rl.active > 0 ? ` (${rl.enforcing} block or challenge${rl.logOnly ? `, ${rl.logOnly} only log` : ""})` : ""}` : ""}.` },
+    { id: "p-rules", text: customRulesKnown
+        ? `${managedWafRulesets} managed WAF ${plural(managedWafRulesets, "ruleset")} ${plural(managedWafRulesets, "is", "are")} deployed, with ${customWafEnabled} custom WAF ${plural(customWafEnabled, "rule")} enabled and ${rl.active} rate limiting ${plural(rl.active, "rule")} enabled${rl.active > 0 ? ` (${rl.enforcing} block or challenge${rl.logOnly ? `, ${rl.logOnly} only log` : ""})` : ""}.`
+        : `${managedWafRulesets} managed WAF ${plural(managedWafRulesets, "ruleset")} ${plural(managedWafRulesets, "is", "are")} deployed. Custom WAF and rate limiting rules could not be read for this report.` },
   ];
   if (dns && dns.totalRecords > 0) posture.push({ id: "p-dns", text: `${dns.proxiedCount} of ${dns.totalRecords} DNS records are proxied through Cloudflare (${dnsProxiedPct}%).` });
   if (certs.length) posture.push({ id: "p-certs", text: `${certs.length} ${plural(certs.length, "certificate")} ${plural(certs.length, "is", "are")} managed and ${expiring} expire within 30 days.` });
